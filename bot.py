@@ -85,6 +85,7 @@ reset_embed_json = {
         "text": "Contribute to ChatLLaMA on GitHub!"
     }
 }
+
 reset_embed = discord.Embed().from_dict(reset_embed_json)
 
 status_embed_json = {
@@ -98,6 +99,12 @@ status_embed_json = {
     }
 }
 status_embed = discord.Embed().from_dict(status_embed_json)
+
+greeting_embed_json = {
+    "title": "",
+    "description": ""
+}
+greeting_embed = discord.Embed().from_dict(greeting_embed_json)
 
 # Load text-generation-webui
 # Define functions
@@ -240,11 +247,9 @@ queues = []
 blocking = False
 reply_count = 0
 
-
-
 async def change_profile(ctx, character):
+    """ Changes username and avatar of bot - will be rate limited by discord api if used too often. Needs a cooldown. """
     #name1, name2, picture, greeting, context, end_of_turn, chat_html_wrapper = load_character(character, '', '', '')
-    #print (testload)
     ctx.bot.last_change = datetime.now()
     try:
         await client.user.edit(username=character)
@@ -259,8 +264,10 @@ async def change_profile(ctx, character):
         ctx.bot.llm_context = new_char[4]
         #await send_long_message(ctx.channel, greeting)
         file = discord.File(picture_path, filename=f'{character}.png')
-        greeting_embed = discord.Embed(title=character, description=greeting)
-        greeting_embed.set_image(url="attachment://image.png")
+        greeting_embed.title=character
+        greeting_embed.description=greeting
+        greeting_embed.set_thumbnail(url="attachment://image.png")
+        #greeting_embed.set_image(url="attachment://image.png")
         await ctx.channel.send(file=file, embed=greeting_embed)
     except Exception as e:
         await ctx.channel.send(f'`{e}`')
@@ -444,7 +451,9 @@ def generate_characters():
         if file.suffix in [".json", ".yml", ".yaml"]:
             character = file.stem
             cards.append(character)
-    # Maybe look for descriptions and emojis as well?  discord.SelectOption( label="Llayla", description="Assistant", emoji='🟣'), 
+    # Nabbed the changes suggested by Hárold
+    # Maybe look for descriptions and emojis as well? 
+    # discord.SelectOption( label="Llayla", description="Assistant", emoji='🟣'), 
     return cards
 
 class Dropdown(discord.ui.Select):
@@ -460,8 +469,7 @@ class Dropdown(discord.ui.Select):
         await change_profile(self.ctx, character)
 
 @client.hybrid_command(description="Choose Character")
-@commands.cooldown(1, 180, commands.BucketType.guild)
-# Might need a longer cooldown so discord doesnt rate limit
+@commands.cooldown(1, 60, commands.BucketType.guild)
 @app_commands.describe()
 async def character(ctx):
     view = DropdownView(ctx)
@@ -473,7 +481,6 @@ class DropdownView(discord.ui.View):
         self.add_item(Dropdown(ctx))
 
 class Behavior():
-    # Meant to be accessed by a discord command later
     def __init__(self):
         self.only_speak_when_spoken_to = True
         self.ignore_parenthesis = True
@@ -481,7 +488,7 @@ class Behavior():
         self.ignore_other_bots = 1
         self.reply_to_bots_when_adressed = random.random()
         self.go_wild_in_channel = True
-        self.user_conversations = {} # Contains user ids and the last time they spoke.
+        self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
     
     def update_user_dict(self, user_id):
@@ -499,7 +506,7 @@ class Behavior():
             return False
 
 def bot_should_reply(message):
-    """ Fucking horrible spaghetti - clean when cba """
+    """ Fucking spaghetti """
     reply = False
     if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == CHANNEL:
         reply = probability_to_reply(
@@ -541,3 +548,4 @@ def check_num_in_queue(message):
 
 client.behavior = Behavior()
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
+
