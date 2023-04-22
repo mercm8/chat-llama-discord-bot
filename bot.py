@@ -13,6 +13,12 @@ from discord.ext import commands
 from discord import app_commands
 import torch
 
+### 
+# Replace TOKEN with discord bot token and CHANNEL with a channel id for the bot to frolic in
+TOKEN = "YOURDISCORDBOTTOKEN"
+CHANNEL = 1234567890
+### 
+
 # Intercept custom bot arguments
 import sys
 bot_arg_list = ["--limit-history", "--token"]
@@ -38,13 +44,11 @@ warnings.filterwarnings("ignore", category=UserWarning, message="TypedStorage is
 warnings.filterwarnings("ignore", category=UserWarning, message="You have modified the pretrained model configuration to control generation")
 
 import modules.extensions as extensions_module
-from modules.chat import chatbot_wrapper, clear_chat_log
+from modules.chat import chatbot_wrapper, clear_chat_log, load_character 
 from modules import shared
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
-
-TOKEN = "<token here>"
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -236,7 +240,49 @@ queues = []
 blocking = False
 reply_count = 0
 
-async def llm_gen(ctx, queues):
+
+
+async def change_profile(ctx, character):
+    #name1, name2, picture, greeting, context, end_of_turn, chat_html_wrapper = load_character(character, '', '', '')
+    #print (testload)
+    ctx.bot.last_change = datetime.now()
+    try:
+        await client.user.edit(username=character)
+        folder = 'characters'
+        picture_path = os.path.join(folder, f'{character}.png')
+        if os.path.exists(picture_path):
+            with open(picture_path, 'rb') as f:
+                picture = f.read()
+            await client.user.edit(avatar=picture)
+        new_char = load_character(character, '', '', '')
+        greeting = new_char[3]
+        ctx.bot.llm_context = new_char[4]
+        #await send_long_message(ctx.channel, greeting)
+        file = discord.File(picture_path, filename=f'{character}.png')
+        greeting_embed = discord.Embed(title=character, description=greeting)
+        greeting_embed.set_image(url="attachment://image.png")
+        await ctx.channel.send(file=file, embed=greeting_embed)
+    except Exception as e:
+        await ctx.channel.send(f'`{e}`')
+    try:
+        await ctx.channel.send(f'`Time since last: {timedelta(seconds=datetime.now() - ctx.bot.last_change)}`')
+    except:
+        pass
+    #print ("prompt is now",prompt)
+
+
+async def send_long_message(channel, message_text):
+    codeblock_index = message_text.find("```")
+    if codeblock_index >= 0:
+        closing_codeblock_index = message_text.find("```", codeblock_index+3)
+    
+    if len(message_text) <= 2000 or codeblock_index == -1 or closing_codeblock_index == -1:
+        await channel.send(message_text)
+    else:
+        chunk_text = message_text[0:closing_codeblock_index+3]
+        await channel.send(chunk_text)
+        await send_long_message(channel, message_text[closing_codeblock_index+3:])
+async def llm_gen(message, queues):
     global blocking
     global reply_count
 
@@ -246,107 +292,116 @@ async def llm_gen(ctx, queues):
         user_input = queues.pop(0)
         mention = list(user_input.keys())[0]
         user_input = user_input[mention]
-        
-        # Prevents the embed character limit error
-        embed_user_input_text = user_input["text"]
-        if len(user_input["text"]) > 1024:
-            embed_user_input_text = user_input["text"][:1021] + "..."
-        
-        reply_embed.set_field_at(index=0, name=user_input["state"]["name1"], value=embed_user_input_text, inline=False)
-        reply_embed.title = "Reply #" + str(reply_count)
-        reply_embed.timestamp = datetime.now() - timedelta(hours=3)
-        reply_embed.set_field_at(index=1, name=user_input["state"]["name2"], value=":arrows_counterclockwise:", inline=False)
-        
-        msg = await ctx.send(embed=reply_embed)
         last_resp = ""
         for resp in chatbot_wrapper(**user_input):
             resp_clean = resp[len(resp)-1][1]
             last_resp = resp_clean
-            msg_to_user = last_resp + ":arrows_counterclockwise:"
-            
-            # Prevents the embed character limit error
-            if len(msg_to_user) > 1024:
-                last_resp = last_resp[:1024]
-                break
-            
-            reply_embed.set_field_at(index=1, name=user_input["state"]["name2"], value=msg_to_user, inline=False)
-            await msg.edit(embed=reply_embed)
-        
+
         logging.info("reply sent: \"" + mention + ": {'text': '" + user_input["text"] + "', 'response': '" + last_resp + "'}\"")
-        reply_embed.set_field_at(index=1, name=user_input["state"]["name2"], value=last_resp, inline=False)
-        await msg.edit(embed=reply_embed)
+        await send_long_message(message.channel, last_resp)
         
-        if bot_args.limit_history is not None and len(shared.history["visible"]) > bot_args.limit_history:
-            shared.history["visible"].pop(0)
-            shared.history["internal"].pop(0)
+        if bot_args.limit_history is not None and len(shared.history['visible']) > bot_args.limit_history:
+            shared.history['visible'].pop(0)
+            shared.history['internal'].pop(0)
         
-        await llm_gen(ctx, queues)
+        await llm_gen(message, queues)
     else:
         blocking = False
 
 @client.event
 async def on_ready():
     logging.info("bot ready")
+    client.llm_context = load_character(client.user.display_name, '', '', '')[4]
     await client.tree.sync()
 
-@client.hybrid_command(description="Reply to LLaMA")
-@app_commands.describe(text="Your reply")
-async def reply(ctx, text, max_new_tokens=200, seed=-1.0, temperature=0.7, top_p=0.1, top_k=40, typical_p=1, repetition_penalty=1.18, encoder_repetition_penalty=1, no_repeat_ngram_size=0, do_sample=True, penalty_alpha=0, num_beams=1, length_penalty=1, add_bos_token=True, custom_stopping_string="", name1=None, name2=None, context=None, end_of_turn="", chat_generation_attempts=1, stop_at_newline=False, mode="cai-chat", regenerate=False, _continue=False):
-    if name1 is None:
-        name1 = your_name
-    if name2 is None:
-        name2 = llamas_name
-    if context is None:
-        context = prompt
-    
-    # Not all parameters can be given as arguments. The Discord API has a limit of 25 arguments.
-    user_input = {
-        "text": text,
-        "state": {
-            "max_new_tokens": max_new_tokens,
-            "seed": seed,
-            "temperature": temperature,
-            "top_p": top_p,
-            "top_k": top_k,
-            "typical_p": typical_p,
-            "repetition_penalty": repetition_penalty,
-            "encoder_repetition_penalty": encoder_repetition_penalty,
-            "no_repeat_ngram_size": no_repeat_ngram_size,
-            "min_length": 0,
-            "do_sample": do_sample,
-            "penalty_alpha": penalty_alpha,
-            "num_beams": num_beams,
-            "length_penalty": length_penalty,
-            "early_stopping": False,
-            "add_bos_token": add_bos_token,
-            "ban_eos_token": False,
-            "skip_special_tokens": True,
-            "truncation_length": 2048,
-            "custom_stopping_strings": "",
-            "name1": name1,
-            "name2": name2,
-            "greeting": "",
-            "context": context,
-            "end_of_turn": end_of_turn,
-            "chat_prompt_size": 2048,
-            "chat_generation_attempts": chat_generation_attempts,
-            "stop_at_newline": stop_at_newline,
-            "mode": mode
-        },
-        "regenerate": regenerate,
-        "_continue": _continue
-    }
+@client.event
+async def on_message(message):
+    if not hasattr(client, 'llm_context'):
+         client.llm_context = load_character(client.user.display_name, '', '', '')[4]
 
-    num = check_num_in_que(ctx)
-    if num >=10:
-        await ctx.send(f"{ctx.message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.")
+    if hasattr(client, 'behavior'):
+        if bot_should_reply(message):
+            pass # Bot replies.
+        else:
+            return # Bot does not reply.
+        
     else:
-        que(ctx, user_input)
-        reaction_list = [":thumbsup:", ":laughing:", ":wink:", ":heart:", ":pray:", ":100:", ":sloth:", ":snake:"]
-        reaction_choice = reaction_list[random.randrange(8)]
-        await ctx.send(f"{ctx.message.author.mention} {reaction_choice} Processing reply...")
-        if not blocking:
-            await llm_gen(ctx, queues)
+        client.behavior = Behavior()
+
+    async with message.channel.typing():
+        text = message.clean_content
+        max_new_tokens=200
+        do_sample=True
+        temperature=0.7
+        top_p=0.1
+        typical_p=1
+        repetition_penalty=1.18
+        encoder_repetition_penalty=1
+        top_k=40
+        min_length=0
+        no_repeat_ngram_size=0
+        num_beams=1
+        penalty_alpha=0
+        length_penalty=1
+        early_stopping=False
+        seed=-1.0
+        name1=message.author.display_name
+        name2=client.user.display_name
+        context=client.llm_context
+        stop_at_newline=True
+        chat_prompt_size=2048
+        chat_generation_attempts=1
+        regenerate=False
+        mode="cai-chat"
+        end_of_turn=""
+        add_bos_token=True
+        custom_stopping_string=""
+        _continue=False
+        user_input = {
+            "text": text,
+            "state": {
+                "max_new_tokens": max_new_tokens,
+                "seed": seed,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+                "typical_p": typical_p,
+                "repetition_penalty": repetition_penalty,
+                "encoder_repetition_penalty": encoder_repetition_penalty,
+                "no_repeat_ngram_size": no_repeat_ngram_size,
+                "min_length": min_length,
+                "do_sample": do_sample,
+                "penalty_alpha": penalty_alpha,
+                "num_beams": num_beams,
+                "length_penalty": length_penalty,
+                "early_stopping": early_stopping,
+                "add_bos_token": add_bos_token,
+                "ban_eos_token": False,
+                "skip_special_tokens": True,
+                "truncation_length": 2048,
+                "custom_stopping_strings": custom_stopping_string,
+                "name1": name1,
+                "name2": name2,
+                "greeting": "",
+                "context": context,
+                "end_of_turn": end_of_turn,
+                "chat_prompt_size": chat_prompt_size,
+                "chat_generation_attempts": chat_generation_attempts,
+                "stop_at_newline": stop_at_newline,
+                "mode": mode
+            },
+            "regenerate": regenerate,
+            "_continue": _continue
+        }
+        print (user_input.keys())
+
+        num = check_num_in_queue(message)
+        if num >=10:
+            await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
+        else:
+            queue(message, user_input)
+            await llm_gen(message, queues)
+
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
@@ -354,24 +409,19 @@ async def reply(ctx, text, max_new_tokens=200, seed=-1.0, temperature=0.7, top_p
     your_name_new="The name which all users speak as",
     llamas_name_new="The name which LLaMA speaks as"
 )
+
 async def reset(ctx, prompt_new=prompt, your_name_new=your_name, llamas_name_new=llamas_name):
-    global prompt
-    global your_name
-    global llamas_name
     global reply_count
-    
-    prompt = prompt_new
-    your_name = your_name_new
-    llamas_name = llamas_name_new
+    your_name = ctx.message.author.display_name
+    llamas_name = ctx.bot.user.display_name
     reply_count = 0
-    
     shared.stop_everything = True
     clear_chat_log(your_name, llamas_name, "", "")
-    
+    await change_profile(ctx, llamas_name)
+    prompt = ctx.bot.llm_context
     logging.info("conversation reset: {'replies': " + str(reply_count) + ", 'your_name': '" + your_name + "', 'llamas_name': '" + llamas_name + "', 'prompt': '" + prompt + "'}")
-    reset_embed.timestamp = datetime.now() - timedelta(hours=3)
-    reset_embed.description = "Replies: " + str(reply_count) + "\nYour name: " + your_name + "\nLLaMA's name: " + llamas_name + "\nPrompt: " + prompt
-    await ctx.send(embed=reset_embed)
+    #reset_embed.timestamp = datetime.now() - timedelta(hours=3)
+    #reset_embed.description = "Replies: " + str(reply_count) + "\nYour name: " + your_name + "\nLLaMA's name: " + llamas_name + "\nPrompt: " + prompt
 
 @client.hybrid_command(description="Check the status of your reply queue position and wait time")
 async def status(ctx):
@@ -387,14 +437,107 @@ async def status(ctx):
     status_embed.description = msg
     await ctx.send(embed=status_embed)
 
-def que(ctx, user_input):
-    user_id = ctx.message.author.mention
-    queues.append({user_id:user_input})
-    logging.info(f"reply requested: '{user_id}: {user_input}'")
+def generate_characters():
+    cards = []
+    # Iterate through files in image folder
+    for file in sorted(Path("characters").glob("*")):
+        if file.suffix in [".json", ".yml", ".yaml"]:
+            character = file.stem
+            cards.append(character)
+    # Maybe look for descriptions and emojis as well?  discord.SelectOption( label="Llayla", description="Assistant", emoji='🟣'), 
+    return cards
 
-def check_num_in_que(ctx):
-    user = ctx.message.author.mention
+class Dropdown(discord.ui.Select):
+    def __init__(self, ctx):
+        options = [discord.SelectOption(label=name) for name in generate_characters()]
+        super().__init__(placeholder='', min_values=1, max_values=1, options=options)
+        self.ctx = ctx
+
+    async def callback(self, interaction: discord.Interaction):
+        character = self.values[0]
+        await interaction.response.send_message(f'Selection: {character}')
+        self.disabled = True  # Supposed to hide dropdown after use. Doesn't seem to do the job.
+        await change_profile(self.ctx, character)
+
+@client.hybrid_command(description="Choose Character")
+@commands.cooldown(1, 180, commands.BucketType.guild)
+# Might need a longer cooldown so discord doesnt rate limit
+@app_commands.describe()
+async def character(ctx):
+    view = DropdownView(ctx)
+    await ctx.send('Choose Character:', view=view)
+
+class DropdownView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__()
+        self.add_item(Dropdown(ctx))
+
+class Behavior():
+    # Meant to be accessed by a discord command later
+    def __init__(self):
+        self.only_speak_when_spoken_to = True
+        self.ignore_parenthesis = True
+        self.reply_to_itself = 0
+        self.ignore_other_bots = 1
+        self.reply_to_bots_when_adressed = random.random()
+        self.go_wild_in_channel = True
+        self.user_conversations = {} # Contains user ids and the last time they spoke.
+        self.conversation_recency = 600
+    
+    def update_user_dict(self, user_id):
+        self.user_conversations[user_id] = datetime.now()
+    
+    def in_active_conversation(self, user_id):
+        if user_id in self.user_conversations:
+            last_conversation_time = self.user_conversations[user_id]
+            time_since_last_conversation = datetime.now() - last_conversation_time
+            if time_since_last_conversation.total_seconds() < self.conversation_recency:
+                return True
+            else:
+                return False
+        else:
+            return False
+
+def bot_should_reply(message):
+    """ Fucking horrible spaghetti - clean when cba """
+    reply = False
+    if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == CHANNEL:
+        reply = probability_to_reply(
+            client.behavior.reply_to_bots_when_adressed)
+        if 'bye' in message.clean_content.lower():
+            return False
+    if client.behavior.ignore_parenthesis and \
+        (message.content.startswith('(') and message.content.endswith(')') \
+         or \
+        (message.content.startswith(':') and message.content.endswith(':'))):
+        return False
+    if (client.behavior.only_speak_when_spoken_to and client.user.mentioned_in(message) \
+                or any(word in message.content.lower() for word in client.user.display_name.lower().split())) \
+            or (client.behavior.in_active_conversation(message.author.id) and message.channel.id == CHANNEL):
+        """ Only speak when spoken to, or in an active conversation with the user """
+        reply = True
+
+    if message.author.bot: reply = probability_to_reply(client.behavior.ignore_other_bots)
+    if client.behavior.go_wild_in_channel and message.channel.id == CHANNEL: reply = True
+    if message.author == client.user: reply = probability_to_reply(client.behavior.reply_to_itself)
+    if reply == True: client.behavior.update_user_dict(message.author.id)
+    return reply
+
+def probability_to_reply(probability):
+    """ 1 always returns True. 0 always returns False. 0.5 has 50% chance of returning True. """
+    roll = random.random()
+    #print (f'{roll=} {probability=}')
+    return roll < probability
+
+def queue(message, user_input):
+    user_id = message.author.mention
+    queues.append({user_id:user_input})
+    logging.info(f'reply requested: "{user_id} asks {user_input["state"]["name2"]}: {user_input["text"]}"')
+
+def check_num_in_queue(message):
+    user = message.author.mention
     user_list_in_que = [list(i.keys())[0] for i in queues]
     return user_list_in_que.count(user)
 
+client.behavior = Behavior()
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
