@@ -13,11 +13,10 @@ from discord.ext import commands
 from discord import app_commands
 import torch
 
-### 
-# Replace TOKEN with discord bot token and CHANNEL with a channel id for the bot to frolic in
+### Replace TOKEN with discord bot token
 TOKEN = "YOURDISCORDBOTTOKEN"
-CHANNEL = 1234567890
-### 
+# Once the bot is online, you can use the /main command to set a channel for it
+
 
 # Intercept custom bot arguments
 import sys
@@ -102,9 +101,20 @@ status_embed = discord.Embed().from_dict(status_embed_json)
 
 greeting_embed_json = {
     "title": "",
-    "description": ""
+    "description": "",
+    "thumbnail": ""
 }
 greeting_embed = discord.Embed().from_dict(greeting_embed_json)
+
+help_embed_json = {
+    "title": "Help menu",
+    "description": 
+      """
+      **/character** - Change character \n 
+      **/main** - Set main channel for bot so it can reply without being called by name
+      """
+}
+help_embed = discord.Embed().from_dict(help_embed_json)
 
 # Load text-generation-webui
 # Define functions
@@ -247,38 +257,56 @@ queues = []
 blocking = False
 reply_count = 0
 
+def ceil_timedelta(td):
+    return (td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60)).replace(microsecond=0)
+
 async def change_profile(ctx, character):
-    """ Changes username and avatar of bot - will be rate limited by discord api if used too often. Needs a cooldown. """
+    """ Changes username and avatar of bot. """
+    """ Will be rate limited by discord api if used too often. Needs a cooldown. 10 minute value is arbitrary. """
     #name1, name2, picture, greeting, context, end_of_turn, chat_html_wrapper = load_character(character, '', '', '')
-    ctx.bot.last_change = datetime.now()
-    try:
-        await client.user.edit(username=character)
-        folder = 'characters'
-        picture_path = os.path.join(folder, f'{character}.png')
-        if os.path.exists(picture_path):
-            with open(picture_path, 'rb') as f:
-                picture = f.read()
-            await client.user.edit(avatar=picture)
-        new_char = load_character(character, '', '', '')
-        greeting = new_char[3]
-        ctx.bot.llm_context = new_char[4]
-        #await send_long_message(ctx.channel, greeting)
-        file = discord.File(picture_path, filename=f'{character}.png')
-        greeting_embed.title=character
-        greeting_embed.description=greeting
-        greeting_embed.set_thumbnail(url="attachment://image.png")
-        #greeting_embed.set_image(url="attachment://image.png")
-        await ctx.channel.send(file=file, embed=greeting_embed)
-    except Exception as e:
-        await ctx.channel.send(f'`{e}`')
-    try:
-        await ctx.channel.send(f'`Time since last: {timedelta(seconds=datetime.now() - ctx.bot.last_change)}`')
-    except:
+    if hasattr(ctx.bot, "last_change"):
+        if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
+            remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
+            await ctx.channel.send(f'Please wait {ceil_timedelta(remaining_cooldown)} before changing character again')
+    else:
+        try:
+            if (ctx.bot.behavior.change_username_with_character):
+                await client.user.edit(username=character)
+            if (ctx.bot.behavior.change_avatar_with_character):
+                folder = 'characters'
+                picture_path = os.path.join(folder, f'{character}.png')
+                if os.path.exists(picture_path):
+                    with open(picture_path, 'rb') as f:
+                        picture = f.read()
+                    await client.user.edit(avatar=picture)
+            new_char = load_character(character, '', '', '')
+            greeting = new_char[3]
+            ctx.bot.llm_context = new_char[4]
+            #await send_long_message(ctx.channel, greeting)
+            file = discord.File(picture_path, filename=f'{character}.png')
+            greeting_embed.title=character
+            greeting_embed.description=greeting
+            #greeting_embed.set_thumbnail(url=f"attachment://{character}.png")
+            greeting_embed.set_image(url=f"attachment://{character}.png")
+            await ctx.channel.send(file=file, embed=greeting_embed)
+            ctx.bot.last_change = datetime.now()
+        except discord.HTTPException as e:
+            """ This exception can happen when you restart the bot and change character too fast without last_change being set """
+            await ctx.channel.send(f'`{e}`')
+        except Exception as e:
+            print (e)
+
+    if ctx.bot.behavior.read_chatlog:
+        """  Allow bot to read recent chatlog somehow. 
+        Might want to do this somewhere else. 
+        Context is being fed in load_character which is external. 
+        Maybe insert it in shared.history from here? 
+        Need to find out how that works. """
         pass
-    #print ("prompt is now",prompt)
 
 
 async def send_long_message(channel, message_text):
+    """ Splits a longer message into parts, making sure code blocks are maintained """
     codeblock_index = message_text.find("```")
     if codeblock_index >= 0:
         closing_codeblock_index = message_text.find("```", codeblock_index+3)
@@ -317,24 +345,20 @@ async def llm_gen(message, queues):
 
 @client.event
 async def on_ready():
+    if not hasattr(client, 'llm_context'):
+        """ Loads character profile based on Bot's display name """
+        client.llm_context = load_character(client.user.display_name, '', '', '')[4]
+    if not hasattr(client, 'behavior'):
+        client.behavior = Behavior()    
     logging.info("bot ready")
-    client.llm_context = load_character(client.user.display_name, '', '', '')[4]
     await client.tree.sync()
 
 @client.event
 async def on_message(message):
-    if not hasattr(client, 'llm_context'):
-         client.llm_context = load_character(client.user.display_name, '', '', '')[4]
-
-    if hasattr(client, 'behavior'):
-        if bot_should_reply(message):
-            pass # Bot replies.
-        else:
-            return # Bot does not reply.
-        
+    if client.behavior.bot_should_reply(message):
+        pass # Bot replies.
     else:
-        client.behavior = Behavior()
-
+        return # Bot does not reply to this message.
     async with message.channel.typing():
         text = message.clean_content
         max_new_tokens=200
@@ -400,7 +424,6 @@ async def on_message(message):
             "regenerate": regenerate,
             "_continue": _continue
         }
-        print (user_input.keys())
 
         num = check_num_in_queue(message)
         if num >=10:
@@ -409,14 +432,21 @@ async def on_message(message):
             queue(message, user_input)
             await llm_gen(message, queues)
 
+@client.hybrid_command(description="Set current channel as main channel for bot to auto reply in without needing to be called")
+async def main(ctx):
+    ctx.bot.behavior.main_channel = ctx.message.channel.id
+    await ctx.respond(f'Bot main channel set to {ctx.message.channel.mention}')
+    #await ctx.message.channel.send(f'Bot main channel set to {ctx.message.channel.mention}')
+
+@client.hybrid_command(description="Display help menu")
+async def helpmenu(ctx):
+    await ctx.send(embed=help_embed)
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
     prompt_new="The initial prompt to contextualize LLaMA",
     your_name_new="The name which all users speak as",
-    llamas_name_new="The name which LLaMA speaks as"
-)
-
+    llamas_name_new="The name which LLaMA speaks as")
 async def reset(ctx, prompt_new=prompt, your_name_new=your_name, llamas_name_new=llamas_name):
     global reply_count
     your_name = ctx.message.author.display_name
@@ -482,14 +512,31 @@ class DropdownView(discord.ui.View):
 
 class Behavior():
     def __init__(self):
+        """ Settings for the bot's behavior. Intended to be accessed via a /command in the future """
+        self.learn_about_and_use_guild_emojis = None # Will consume tokens
+        self.take_notes_about_users = None # Will consume tokens
+        self.read_chatlog = None # Feed a few lines on character change from the previous chat session into context to make characters aware of each other.
+        """ Those with None are not yet implemented and possibly terrible ideas """
+        self.change_username_with_character = True
+        self.change_avatar_with_character = True
+        self.main_channel = 123 # Why not set the channel in here via bot commands instead of hardcoding like a maniac.
         self.only_speak_when_spoken_to = True
         self.ignore_parenthesis = True
         self.reply_to_itself = 0
-        self.ignore_other_bots = 1
+        self.chance_to_reply_to_other_bots = 0.3 #Reduce this if bot is too chatty with other bots
         self.reply_to_bots_when_adressed = random.random()
         self.go_wild_in_channel = True
         self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
+
+        import sqlite3
+        conn = sqlite3.connect('bot.db')
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS emojis (emoji, meaning)''') # set up command for bot to ask and learn about emojis
+        c.execute('''CREATE TABLE IF NOT EXISTS config (setting, value)''') # future long term storage for main channel etc
+        #c.execute('''CREATE TABLE IF NOT EXISTS usernotes (users, message, notes, keywords)''')
+        conn.commit()
+        conn.close()
     
     def update_user_dict(self, user_id):
         self.user_conversations[user_id] = datetime.now()
@@ -505,36 +552,39 @@ class Behavior():
         else:
             return False
 
-def bot_should_reply(message):
-    """ Fucking spaghetti """
-    reply = False
-    if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == CHANNEL:
-        reply = probability_to_reply(
-            client.behavior.reply_to_bots_when_adressed)
-        if 'bye' in message.clean_content.lower():
+    def bot_should_reply(self, message):
+        reply = False
+        if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == self.main_channel:
+            """ If another bot is speaking and using this bot's name in the main channel """
+            reply = self.probability_to_reply(self.reply_to_bots_when_adressed)
+            if 'bye' in message.clean_content.lower():
+                """ if other bot is trying to say goodbye, just stop replying so it doesn't get awkward """
+                return False
+            
+        if self.ignore_parenthesis and \
+            (message.content.startswith('(') and message.content.endswith(')') \
+            or \
+            (message.content.startswith(':') and message.content.endswith(':'))):
+            """ if someone is simply using an :emoji: or (speaking like this) """
             return False
-    if client.behavior.ignore_parenthesis and \
-        (message.content.startswith('(') and message.content.endswith(')') \
-         or \
-        (message.content.startswith(':') and message.content.endswith(':'))):
-        return False
-    if (client.behavior.only_speak_when_spoken_to and client.user.mentioned_in(message) \
-                or any(word in message.content.lower() for word in client.user.display_name.lower().split())) \
-            or (client.behavior.in_active_conversation(message.author.id) and message.channel.id == CHANNEL):
-        """ Only speak when spoken to, or in an active conversation with the user """
-        reply = True
+        
+        if (self.only_speak_when_spoken_to and client.user.mentioned_in(message) \
+                    or any(word in message.content.lower() for word in client.user.display_name.lower().split())) \
+                or (self.in_active_conversation(message.author.id) and message.channel.id == self.main_channel):
+            """ If bot is set to only speak when spoken to and someone uses its name
+                or if is in an active conversation with the user in the main channel, we reply. """
+            reply = True
 
-    if message.author.bot: reply = probability_to_reply(client.behavior.ignore_other_bots)
-    if client.behavior.go_wild_in_channel and message.channel.id == CHANNEL: reply = True
-    if message.author == client.user: reply = probability_to_reply(client.behavior.reply_to_itself)
-    if reply == True: client.behavior.update_user_dict(message.author.id)
-    return reply
+        if message.author.bot and message.channel.id == self.main_channel: reply = self.probability_to_reply(self.chance_to_reply_to_other_bots)
+        if self.go_wild_in_channel and message.channel.id == self.main_channel: reply = True
+        if message.author == client.user: reply = self.probability_to_reply(self.reply_to_itself)
+        if reply == True: self.update_user_dict(message.author.id)
+        return reply
 
-def probability_to_reply(probability):
-    """ 1 always returns True. 0 always returns False. 0.5 has 50% chance of returning True. """
-    roll = random.random()
-    #print (f'{roll=} {probability=}')
-    return roll < probability
+    def probability_to_reply(self, probability):
+        """ 1 always returns True. 0 always returns False. 0.5 has 50% chance of returning True. """
+        roll = random.random()
+        return roll < probability
 
 def queue(message, user_input):
     user_id = message.author.mention
@@ -546,6 +596,5 @@ def check_num_in_queue(message):
     user_list_in_que = [list(i.keys())[0] for i in queues]
     return user_list_in_que.count(user)
 
-client.behavior = Behavior()
-client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
 
+client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
