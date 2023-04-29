@@ -17,6 +17,11 @@ import torch
 TOKEN = "YOURDISCORDBOTTOKEN"
 # Once the bot is online, you can use the /main command to set a channel for it
 
+A1111 = "http://127.0.0.1:7860"
+
+logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
+                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+                    level=logging.DEBUG)
 
 # Intercept custom bot arguments
 import sys
@@ -110,11 +115,14 @@ help_embed_json = {
     "title": "Help menu",
     "description": 
       """
-      **/character** - Change character \n 
+      **/character** - Change character
       **/main** - Set main channel for bot so it can reply without being called by name
+      **/pic** - Ask the bot to take a picture. Requires A1111.
       """
 }
 help_embed = discord.Embed().from_dict(help_embed_json)
+
+
 
 # Load text-generation-webui
 # Define functions
@@ -258,7 +266,8 @@ blocking = False
 reply_count = 0
 
 def ceil_timedelta(td):
-    return (td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60)).replace(microsecond=0)
+    return td + (datetime.min - td) % timedelta(minutes=1)
+    #return str(td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60))
 
 async def change_profile(ctx, character):
     """ Changes username and avatar of bot. """
@@ -317,6 +326,7 @@ async def send_long_message(channel, message_text):
         chunk_text = message_text[0:closing_codeblock_index+3]
         await channel.send(chunk_text)
         await send_long_message(channel, message_text[closing_codeblock_index+3:])
+
 async def llm_gen(message, queues):
     global blocking
     global reply_count
@@ -353,78 +363,158 @@ async def on_ready():
     logging.info("bot ready")
     await client.tree.sync()
 
+  
+async def create_image_prompt(llm_prompt):
+    """ Oh man I hate repeating all this but CBA refactoring the message code"""
+    max_new_tokens=400 #200?
+    do_sample=True
+    temperature=0.7
+    top_p=0.1
+    typical_p=1
+    repetition_penalty=1.18
+    encoder_repetition_penalty=1
+    top_k=40
+    min_length=50
+    no_repeat_ngram_size=0
+    num_beams=1
+    penalty_alpha=0
+    length_penalty=1
+    early_stopping=False
+    seed=-1.0
+    name1=''
+    name2=client.user.display_name
+    context=client.llm_context
+    stop_at_newline=False
+    chat_prompt_size=2048
+    chat_generation_attempts=1
+    regenerate=False
+    mode="cai-chat"
+    end_of_turn=""
+    add_bos_token=True
+    custom_stopping_string='"### Assistant","### Human"'
+    _continue=False
+    user_input = {
+        "text": llm_prompt,
+        "state": {
+            "max_new_tokens": max_new_tokens,
+            "seed": seed,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "typical_p": typical_p,
+            "repetition_penalty": repetition_penalty,
+            "encoder_repetition_penalty": encoder_repetition_penalty,
+            "no_repeat_ngram_size": no_repeat_ngram_size,
+            "min_length": min_length,
+            "do_sample": do_sample,
+            "penalty_alpha": penalty_alpha,
+            "num_beams": num_beams,
+            "length_penalty": length_penalty,
+            "early_stopping": early_stopping,
+            "add_bos_token": add_bos_token,
+            "ban_eos_token": False, 
+            "skip_special_tokens": True,
+            "truncation_length": 2048,
+            "custom_stopping_strings": custom_stopping_string,
+            "name1": name1,
+            "name2": name2,
+            "greeting": "",
+            "context": context,
+            "end_of_turn": end_of_turn,
+            "chat_prompt_size": chat_prompt_size,
+            "chat_generation_attempts": chat_generation_attempts,
+            "stop_at_newline": stop_at_newline,
+            "mode": mode
+        },
+        "regenerate": regenerate,
+        "_continue": _continue
+    }
+    for resp in chatbot_wrapper(**user_input):
+        resp_clean = resp[len(resp)-1][1]
+        last_resp = resp_clean
+    return last_resp
+
 @client.event
 async def on_message(message):
+    if not client.behavior.main_channel:
+        client.behavior.main_channel = message.channel.id
+        help_embed.title = f"Main channel set to {message.channel.mention}"
+        help_embed.description = """
+            **/character** - Change character
+            **/main** - Set main channel for bot so it can reply without being called by name
+            **/pic*** - Ask the bot to take a picture. Requires A1111.
+            """
+        await message.channel.send(embed=help_embed)
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
     else:
         return # Bot does not reply to this message.
-    async with message.channel.typing():
-        text = message.clean_content
-        max_new_tokens=200
-        do_sample=True
-        temperature=0.7
-        top_p=0.1
-        typical_p=1
-        repetition_penalty=1.18
-        encoder_repetition_penalty=1
-        top_k=40
-        min_length=0
-        no_repeat_ngram_size=0
-        num_beams=1
-        penalty_alpha=0
-        length_penalty=1
-        early_stopping=False
-        seed=-1.0
-        name1=message.author.display_name
-        name2=client.user.display_name
-        context=client.llm_context
-        stop_at_newline=True
-        chat_prompt_size=2048
-        chat_generation_attempts=1
-        regenerate=False
-        mode="cai-chat"
-        end_of_turn=""
-        add_bos_token=True
-        custom_stopping_string=""
-        _continue=False
-        user_input = {
-            "text": text,
-            "state": {
-                "max_new_tokens": max_new_tokens,
-                "seed": seed,
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-                "typical_p": typical_p,
-                "repetition_penalty": repetition_penalty,
-                "encoder_repetition_penalty": encoder_repetition_penalty,
-                "no_repeat_ngram_size": no_repeat_ngram_size,
-                "min_length": min_length,
-                "do_sample": do_sample,
-                "penalty_alpha": penalty_alpha,
-                "num_beams": num_beams,
-                "length_penalty": length_penalty,
-                "early_stopping": early_stopping,
-                "add_bos_token": add_bos_token,
-                "ban_eos_token": False,
-                "skip_special_tokens": True,
-                "truncation_length": 2048,
-                "custom_stopping_strings": custom_stopping_string,
-                "name1": name1,
-                "name2": name2,
-                "greeting": "",
-                "context": context,
-                "end_of_turn": end_of_turn,
-                "chat_prompt_size": chat_prompt_size,
-                "chat_generation_attempts": chat_generation_attempts,
-                "stop_at_newline": stop_at_newline,
-                "mode": mode
-            },
-            "regenerate": regenerate,
-            "_continue": _continue
-        }
+    text = message.clean_content
+    max_new_tokens=400 #200?
+    do_sample=True
+    temperature=0.7
+    top_p=0.1
+    typical_p=1
+    repetition_penalty=1.18
+    encoder_repetition_penalty=1
+    top_k=40
+    min_length=50
+    no_repeat_ngram_size=0
+    num_beams=1
+    penalty_alpha=0
+    length_penalty=1
+    early_stopping=False
+    seed=-1.0
+    name1=message.author.display_name
+    name2=client.user.display_name
+    context=client.llm_context
+    stop_at_newline=False
+    chat_prompt_size=2048
+    chat_generation_attempts=1
+    regenerate=False
+    mode="cai-chat"
+    end_of_turn=""
+    add_bos_token=True
+    custom_stopping_string='"### Assistant","### Human"'
+    _continue=False
+    user_input = {
+        "text": text,
+        "state": {
+            "max_new_tokens": max_new_tokens,
+            "seed": seed,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "typical_p": typical_p,
+            "repetition_penalty": repetition_penalty,
+            "encoder_repetition_penalty": encoder_repetition_penalty,
+            "no_repeat_ngram_size": no_repeat_ngram_size,
+            "min_length": min_length,
+            "do_sample": do_sample,
+            "penalty_alpha": penalty_alpha,
+            "num_beams": num_beams,
+            "length_penalty": length_penalty,
+            "early_stopping": early_stopping,
+            "add_bos_token": add_bos_token,
+            "ban_eos_token": False, ### allows longer responses but bot might start to ramble and hallucinate questions
+            "skip_special_tokens": True,
+            "truncation_length": 2048,
+            "custom_stopping_strings": custom_stopping_string,
+            "name1": name1,
+            "name2": name2,
+            "greeting": "",
+            "context": context,
+            "end_of_turn": end_of_turn,
+            "chat_prompt_size": chat_prompt_size,
+            "chat_generation_attempts": chat_generation_attempts,
+            "stop_at_newline": stop_at_newline,
+            "mode": mode
+        },
+        "regenerate": regenerate,
+        "_continue": _continue
+    }
 
+    async with message.channel.typing():
         num = check_num_in_queue(message)
         if num >=10:
             await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
@@ -441,6 +531,55 @@ async def main(ctx):
 @client.hybrid_command(description="Display help menu")
 async def helpmenu(ctx):
     await ctx.send(embed=help_embed)
+
+@client.hybrid_command(description="Take a picture!")
+async def pic(ctx):
+    try:
+        r = requests.get(f'{A1111}/')
+        status = r.raise_for_status()
+    except requests.exceptions.ConnectionError as err:
+        # eg, no internet
+        raise SystemExit(err)
+    except requests.exceptions.HTTPError as err:
+        # eg, url, server and other errors
+        raise SystemExit(err)
+    except Exception as exc:
+        logging.warning(exc)
+        help_embed.title = f"A1111 api is not running at {A1111}"
+        help_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+        await ctx.reply(embed=help_embed)
+    else:
+        await ctx.reply('Hang on let me find my camera')
+        llm_prompt = "Describe the scene as if it were a picture, also describe yourself and refer to yourself in the third person. Include details from our conversation."
+        image_prompt = await create_image_prompt(llm_prompt)
+        payload = { "prompt": image_prompt, "width": 512, "height": 512, "steps": 20, "restore_faces": True }
+
+        # Looking for base SD prompts in the character files
+        filepath = next(Path("characters").glob(f"{client.user.display_name}.{{yml,yaml,json}}"), None)
+        for extension in ["yml", "yaml", "json"]:
+            filepath = Path(f'characters/{client.user.display_name}.{extension}')
+            if filepath.exists():
+                break
+        print (f"looking for {client.user.display_name}'s stuff in {filepath}")
+        if filepath:
+            with open(filepath) as f:
+                data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
+                sd_prompt_prefix = data.get("sd_prompt_prefix")
+                sd_prompt_suffix = data.get("sd_prompt_suffix")
+                sd_neg_prompt = data.get("sd_neg_prompt")
+
+            if sd_neg_prompt: payload["negative_prompt"] = sd_neg_prompt
+            if sd_prompt_prefix: payload["prompt"] = sd_prompt_prefix + " " + image_prompt
+            if sd_prompt_prefix: payload["prompt"] += " "+sd_prompt_suffix
+
+        task = asyncio.ensure_future(generate_image_with_a1111(payload))
+        try:
+            await asyncio.wait_for(task, timeout=25)
+        except asyncio.TimeoutError:
+            await ctx.send("Nah cant find it")
+        else:
+            file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
+            await ctx.send(file=file)
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
@@ -472,6 +611,7 @@ async def status(ctx):
 
     status_embed.timestamp = datetime.now() - timedelta(hours=3)
     status_embed.description = msg
+    
     await ctx.send(embed=status_embed)
 
 def generate_characters():
@@ -479,16 +619,26 @@ def generate_characters():
     # Iterate through files in image folder
     for file in sorted(Path("characters").glob("*")):
         if file.suffix in [".json", ".yml", ".yaml"]:
-            character = file.stem
-            cards.append(character)
-    # Nabbed the changes suggested by Hárold
-    # Maybe look for descriptions and emojis as well? 
-    # discord.SelectOption( label="Llayla", description="Assistant", emoji='🟣'), 
+            character = {}
+            character["name"] = file.stem
+            filepath = str(Path(file).absolute())
+            with open(filepath, encoding='utf-8') as f:
+                data = json.load(f) if file.suffix == ".json" else yaml.safe_load(f)
+                description = data.get("bot_description")
+                emoji = data.get("bot_emoji")
+                #custom emojis are like this <:sheila:576121845426814986> you get it by doing \:sheila:
+                print(emoji)
+                #if emoji:
+                #    emoji = discord.Emoji(name=emoji)
+                character["bot_description"] = description if description else None
+                character["bot_emoji"] = emoji if emoji else "💬" #🧠
+                print (character)
+                cards.append(character)
     return cards
 
 class Dropdown(discord.ui.Select):
     def __init__(self, ctx):
-        options = [discord.SelectOption(label=name) for name in generate_characters()]
+        options = [discord.SelectOption(label=character["name"], description=character["bot_description"], emoji=character["bot_emoji"]) for character in generate_characters()]
         super().__init__(placeholder='', min_values=1, max_values=1, options=options)
         self.ctx = ctx
 
@@ -503,7 +653,14 @@ class Dropdown(discord.ui.Select):
 @app_commands.describe()
 async def character(ctx):
     view = DropdownView(ctx)
-    await ctx.send('Choose Character:', view=view)
+    if hasattr(ctx.bot, "last_change"):
+        if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
+            remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
+            remaining_cooldown = total_seconds = remaining_cooldown.total_seconds()
+
+            await ctx.channel.send(f'`Please wait {ceil_timedelta(remaining_cooldown)} before changing character again`')
+    else:
+        await ctx.send('Choose Character:', view=view)
 
 class DropdownView(discord.ui.View):
     def __init__(self, ctx):
@@ -512,20 +669,20 @@ class DropdownView(discord.ui.View):
 
 class Behavior():
     def __init__(self):
-        """ Settings for the bot's behavior. Intended to be accessed via a /command in the future """
-        self.learn_about_and_use_guild_emojis = None # Will consume tokens
-        self.take_notes_about_users = None # Will consume tokens
+        """ Settings for the bot's behavior. Intended to be accessed via a command in the future """
+        self.learn_about_and_use_guild_emojis = None # Considering a specific command that randomly asks about one unknown emoji
+        self.take_notes_about_users = None # Will consume tokens to loop this back into the context but could be worth it
         self.read_chatlog = None # Feed a few lines on character change from the previous chat session into context to make characters aware of each other.
-        """ Those with None are not yet implemented and possibly terrible ideas """
+        """ Those above are not yet implemented and possibly terrible ideas """
         self.change_username_with_character = True
         self.change_avatar_with_character = True
-        self.main_channel = 123 # Why not set the channel in here via bot commands instead of hardcoding like a maniac.
+        self.main_channel = None # Why not set the channel in here via bot commands instead of hardcoding like a maniac.
         self.only_speak_when_spoken_to = True
         self.ignore_parenthesis = True
         self.reply_to_itself = 0
         self.chance_to_reply_to_other_bots = 0.3 #Reduce this if bot is too chatty with other bots
         self.reply_to_bots_when_adressed = random.random()
-        self.go_wild_in_channel = True
+        self.go_wild_in_channel = True 
         self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
 
@@ -546,6 +703,7 @@ class Behavior():
             last_conversation_time = self.user_conversations[user_id]
             time_since_last_conversation = datetime.now() - last_conversation_time
             if time_since_last_conversation.total_seconds() < self.conversation_recency:
+                logging.info(f'behavior: {user_id} is in active conversation')
                 return True
             else:
                 return False
@@ -555,7 +713,7 @@ class Behavior():
     def bot_should_reply(self, message):
         reply = False
         if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == self.main_channel:
-            """ If another bot is speaking and using this bot's name in the main channel """
+            """ if using this bot's name in the main channel and another bot is speaking """
             reply = self.probability_to_reply(self.reply_to_bots_when_adressed)
             if 'bye' in message.clean_content.lower():
                 """ if other bot is trying to say goodbye, just stop replying so it doesn't get awkward """
@@ -573,12 +731,21 @@ class Behavior():
                 or (self.in_active_conversation(message.author.id) and message.channel.id == self.main_channel):
             """ If bot is set to only speak when spoken to and someone uses its name
                 or if is in an active conversation with the user in the main channel, we reply. """
-            reply = True
+            logging.info(f'behavior: Only_speak_when_spoken_to triggered')
+            return True
+        else:
+            reply = False 
 
         if message.author.bot and message.channel.id == self.main_channel: reply = self.probability_to_reply(self.chance_to_reply_to_other_bots)
-        if self.go_wild_in_channel and message.channel.id == self.main_channel: reply = True
-        if message.author == client.user: reply = self.probability_to_reply(self.reply_to_itself)
-        if reply == True: self.update_user_dict(message.author.id)
+        if self.go_wild_in_channel and message.channel.id == self.main_channel: 
+            reply = True
+            logging.info(f'behavior: {reply=}')
+        if message.author == client.user: 
+            reply = self.probability_to_reply(self.reply_to_itself)
+            logging.info(f'behavior: {reply=}')
+        if reply == True: 
+            self.update_user_dict(message.author.id)
+            logging.info(f'behavior: {reply=}')
         return reply
 
     def probability_to_reply(self, probability):
@@ -596,5 +763,24 @@ def check_num_in_queue(message):
     user_list_in_que = [list(i.keys())[0] for i in queues]
     return user_list_in_que.count(user)
 
+async def generate_image_with_a1111(payload):
+    print(payload)
+    response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
+    r = response.json()
 
+    for i in r['images']:
+        image = Image.open(io.BytesIO(base64.b64decode(i.split(",",1)[0])))
+
+        png_payload = {
+            "image": "data:image/png;base64," + i
+        }
+        response2 = requests.post(url=f'{A1111}/sdapi/v1/png-info', json=png_payload)
+
+        pnginfo = PngImagePlugin.PngInfo()
+        pnginfo.add_text("parameters", response2.json().get("info"))
+        image.save(f'{client.user.display_name}.png', pnginfo=pnginfo)
+    return image
+
+if not hasattr(client, 'behavior'):
+    client.behavior = Behavior()    
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
