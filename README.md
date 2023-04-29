@@ -3,6 +3,7 @@
 A Discord Bot for chatting with LLaMA, Vicuna, Alpaca, or any other LLaMA-based model. It's not as good as ChatGPT but LLaMA and its derivatives are pretty impressive on their own. Tag the bot with it's @username or mention it by name to talk to it. Give it a channel of its own to avoid having to tag it every time. Use `/character` to change to other characters in your character folder. To clear chat history with LLaMA or change the initial prompt, use `/reset`. Sometimes LLaMA will get stuck or you will want to change the initial prompt to something more interesting so `/reset` is well used.
 
 Can use A1111 if it is in api mode with `/pics` command: 
+
 ![image](https://user-images.githubusercontent.com/37743453/235309643-316b0f68-58d6-4023-bb4b-d86d2a212ce5.png)
 
 
