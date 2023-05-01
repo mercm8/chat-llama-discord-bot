@@ -19,9 +19,10 @@ TOKEN = "YOURDISCORDBOTTOKEN"
 
 A1111 = "http://127.0.0.1:7860"
 
-logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
-                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
-                    level=logging.DEBUG)
+# logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
+#                     datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+#                     level=logging.WARNING)
+
 
 # Intercept custom bot arguments
 import sys
@@ -111,16 +112,15 @@ greeting_embed_json = {
 }
 greeting_embed = discord.Embed().from_dict(greeting_embed_json)
 
-help_embed_json = {
-    "title": "Help menu",
-    "description": 
-      """
+info_embed_json = {
+    "title": "How to use",
+    "description": """
       **/character** - Change character
       **/main** - Set main channel for bot so it can reply without being called by name
-      **/pic** - Ask the bot to take a picture. Requires A1111.
+      **/pic** - Ask the bot to take a picture. You can also directly ask it to *take a picture* or *take a selfie* in clear text.
       """
 }
-help_embed = discord.Embed().from_dict(help_embed_json)
+info_embed = discord.Embed().from_dict(info_embed_json)
 
 
 
@@ -266,7 +266,8 @@ blocking = False
 reply_count = 0
 
 def ceil_timedelta(td):
-    return td + (datetime.min - td) % timedelta(minutes=1)
+    return td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60)
+    #return td + (datetime.min - td) % timedelta(minutes=1)
     #return str(td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60))
 
 async def change_profile(ctx, character):
@@ -279,7 +280,7 @@ async def change_profile(ctx, character):
             await ctx.channel.send(f'Please wait {ceil_timedelta(remaining_cooldown)} before changing character again')
     else:
         try:
-            if (ctx.bot.behavior.change_username_with_character):
+            if (ctx.bot.behavior.change_username_with_character and ctx.bot.user.display_name != character):
                 await client.user.edit(username=character)
             if (ctx.bot.behavior.change_avatar_with_character):
                 folder = 'characters'
@@ -301,9 +302,9 @@ async def change_profile(ctx, character):
             ctx.bot.last_change = datetime.now()
         except discord.HTTPException as e:
             """ This exception can happen when you restart the bot and change character too fast without last_change being set """
-            await ctx.channel.send(f'`{e}`')
+            logging.warning(e)
         except Exception as e:
-            print (e)
+            logging.warning(e)
 
     if ctx.bot.behavior.read_chatlog:
         """  Allow bot to read recent chatlog somehow. 
@@ -366,69 +367,12 @@ async def on_ready():
   
 async def create_image_prompt(llm_prompt):
     """ Oh man I hate repeating all this but CBA refactoring the message code"""
-    max_new_tokens=400 #200?
-    do_sample=True
-    temperature=0.7
-    top_p=0.1
-    typical_p=1
-    repetition_penalty=1.18
-    encoder_repetition_penalty=1
-    top_k=40
-    min_length=50
-    no_repeat_ngram_size=0
-    num_beams=1
-    penalty_alpha=0
-    length_penalty=1
-    early_stopping=False
-    seed=-1.0
-    name1=''
-    name2=client.user.display_name
-    context=client.llm_context
-    stop_at_newline=False
-    chat_prompt_size=2048
-    chat_generation_attempts=1
-    regenerate=False
-    mode="cai-chat"
-    end_of_turn=""
-    add_bos_token=True
-    custom_stopping_string='"### Assistant","### Human"'
-    _continue=False
-    user_input = {
-        "text": llm_prompt,
-        "state": {
-            "max_new_tokens": max_new_tokens,
-            "seed": seed,
-            "temperature": temperature,
-            "top_p": top_p,
-            "top_k": top_k,
-            "typical_p": typical_p,
-            "repetition_penalty": repetition_penalty,
-            "encoder_repetition_penalty": encoder_repetition_penalty,
-            "no_repeat_ngram_size": no_repeat_ngram_size,
-            "min_length": min_length,
-            "do_sample": do_sample,
-            "penalty_alpha": penalty_alpha,
-            "num_beams": num_beams,
-            "length_penalty": length_penalty,
-            "early_stopping": early_stopping,
-            "add_bos_token": add_bos_token,
-            "ban_eos_token": False, 
-            "skip_special_tokens": True,
-            "truncation_length": 2048,
-            "custom_stopping_strings": custom_stopping_string,
-            "name1": name1,
-            "name2": name2,
-            "greeting": "",
-            "context": context,
-            "end_of_turn": end_of_turn,
-            "chat_prompt_size": chat_prompt_size,
-            "chat_generation_attempts": chat_generation_attempts,
-            "stop_at_newline": stop_at_newline,
-            "mode": mode
-        },
-        "regenerate": regenerate,
-        "_continue": _continue
-    }
+    user_input = LLMUserInputs().settings
+    user_input["text"] = llm_prompt
+    user_input["state"]["name1"] = ""
+    user_input["state"]["name2"] = client.user.display_name
+    user_input["state"]["context"] = client.llm_context
+    
     for resp in chatbot_wrapper(**user_input):
         resp_clean = resp[len(resp)-1][1]
         last_resp = resp_clean
@@ -436,150 +380,117 @@ async def create_image_prompt(llm_prompt):
 
 @client.event
 async def on_message(message):
-    if not client.behavior.main_channel:
-        client.behavior.main_channel = message.channel.id
-        help_embed.title = f"Main channel set to {message.channel.mention}"
-        help_embed.description = """
-            **/character** - Change character
-            **/main** - Set main channel for bot so it can reply without being called by name
-            **/pic*** - Ask the bot to take a picture. Requires A1111.
-            """
-        await message.channel.send(embed=help_embed)
+    ctx = await client.get_context(message)
+    if client.behavior.main_channel == None and client.user.display_name in message.clean_content:
+        """ User has not set a main channel for bot but is speaking to it. 
+        Setting current channel as main channel for bot which will also instruct 
+        user on how to change main channel in the embed notification """
+        main(ctx)
+
+    if 'take a selfie' in message.clean_content.lower() or 'take a picture' in message.clean_content.lower():
+        await pic(ctx, prompt=message.clean_content)
+        return
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
     else:
         return # Bot does not reply to this message.
-    text = message.clean_content
-    max_new_tokens=400 #200?
-    do_sample=True
-    temperature=0.7
-    top_p=0.1
-    typical_p=1
-    repetition_penalty=1.18
-    encoder_repetition_penalty=1
-    top_k=40
-    min_length=50
-    no_repeat_ngram_size=0
-    num_beams=1
-    penalty_alpha=0
-    length_penalty=1
-    early_stopping=False
-    seed=-1.0
-    name1=message.author.display_name
-    name2=client.user.display_name
-    context=client.llm_context
-    stop_at_newline=False
-    chat_prompt_size=2048
-    chat_generation_attempts=1
-    regenerate=False
-    mode="cai-chat"
-    end_of_turn=""
-    add_bos_token=True
-    custom_stopping_string='"### Assistant","### Human"'
-    _continue=False
-    user_input = {
-        "text": text,
-        "state": {
-            "max_new_tokens": max_new_tokens,
-            "seed": seed,
-            "temperature": temperature,
-            "top_p": top_p,
-            "top_k": top_k,
-            "typical_p": typical_p,
-            "repetition_penalty": repetition_penalty,
-            "encoder_repetition_penalty": encoder_repetition_penalty,
-            "no_repeat_ngram_size": no_repeat_ngram_size,
-            "min_length": min_length,
-            "do_sample": do_sample,
-            "penalty_alpha": penalty_alpha,
-            "num_beams": num_beams,
-            "length_penalty": length_penalty,
-            "early_stopping": early_stopping,
-            "add_bos_token": add_bos_token,
-            "ban_eos_token": False, ### allows longer responses but bot might start to ramble and hallucinate questions
-            "skip_special_tokens": True,
-            "truncation_length": 2048,
-            "custom_stopping_strings": custom_stopping_string,
-            "name1": name1,
-            "name2": name2,
-            "greeting": "",
-            "context": context,
-            "end_of_turn": end_of_turn,
-            "chat_prompt_size": chat_prompt_size,
-            "chat_generation_attempts": chat_generation_attempts,
-            "stop_at_newline": stop_at_newline,
-            "mode": mode
-        },
-        "regenerate": regenerate,
-        "_continue": _continue
-    }
-
-    async with message.channel.typing():
-        num = check_num_in_queue(message)
-        if num >=10:
-            await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
-        else:
-            queue(message, user_input)
+    
+    user_input = LLMUserInputs().settings
+    user_input["text"] = message.clean_content
+    user_input["state"]["name1"] = message.author.display_name
+    user_input["state"]["name2"] = client.user.display_name
+    user_input["state"]["context"] = client.llm_context
+    num = check_num_in_queue(message)
+    if num >=10:
+        await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
+    else:
+        queue(message, user_input)
+        async with message.channel.typing():
             await llm_gen(message, queues)
 
 @client.hybrid_command(description="Set current channel as main channel for bot to auto reply in without needing to be called")
 async def main(ctx):
     ctx.bot.behavior.main_channel = ctx.message.channel.id
-    await ctx.respond(f'Bot main channel set to {ctx.message.channel.mention}')
+    conn = sqlite3.connect('bot.db')
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channel', f'{ctx.message.channel.id}'))
+    conn.commit()
+    conn.close()
+    await ctx.reply(f'Bot main channel set to {ctx.message.channel.mention}')
     #await ctx.message.channel.send(f'Bot main channel set to {ctx.message.channel.mention}')
 
 @client.hybrid_command(description="Display help menu")
 async def helpmenu(ctx):
-    await ctx.send(embed=help_embed)
+    await ctx.send(embed=info_embed)
 
-@client.hybrid_command(description="Take a picture!")
-async def pic(ctx):
+def a1111_online():
     try:
         r = requests.get(f'{A1111}/')
         status = r.raise_for_status()
-    except requests.exceptions.ConnectionError as err:
-        # eg, no internet
-        raise SystemExit(err)
-    except requests.exceptions.HTTPError as err:
-        # eg, url, server and other errors
-        raise SystemExit(err)
+        logging.info(status)
+        return True
     except Exception as exc:
         logging.warning(exc)
-        help_embed.title = f"A1111 api is not running at {A1111}"
-        help_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
-        await ctx.reply(embed=help_embed)
-    else:
-        await ctx.reply('Hang on let me find my camera')
-        llm_prompt = "Describe the scene as if it were a picture, also describe yourself and refer to yourself in the third person. Include details from our conversation."
-        image_prompt = await create_image_prompt(llm_prompt)
-        payload = { "prompt": image_prompt, "width": 512, "height": 512, "steps": 20, "restore_faces": True }
+        return False
 
-        # Looking for base SD prompts in the character files
+@client.hybrid_command(description="Take a picture!")
+@app_commands.describe(prompt="The initial prompt to contextualize LLaMA")
+async def pic(ctx, prompt=None):
+    if not a1111_online():
+        info_embed.title = f"A1111 api is not running at {A1111}"
+        info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+        await ctx.reply(embed=info_embed)
+    else:
+        info_embed.title = "Processing ..."
+        info_embed.description = " "
+        picture_frame = await ctx.reply(embed=info_embed)
+        if not prompt:
+            llm_prompt = """Describe the scene as if it were a picture, 
+            also describe yourself and refer to yourself in the third person 
+            if the picture is of you. Include as much detail as you can."""
+            image_prompt = await create_image_prompt(llm_prompt)
+        else:
+            image_prompt = prompt
+        info_embed.title = "Generating image ..."
+        info_embed.description = image_prompt
+        await picture_frame.edit(embed=info_embed)
+        payload = { "prompt": image_prompt, "width": 768, "height": 512, "steps": 20, "restore_faces": True } 
+        # Seems to use the currently loaded model in A1111. How much of the payload is inherited?
+
+        # Looking for SD prompts in the character files
         filepath = next(Path("characters").glob(f"{client.user.display_name}.{{yml,yaml,json}}"), None)
         for extension in ["yml", "yaml", "json"]:
             filepath = Path(f'characters/{client.user.display_name}.{extension}')
             if filepath.exists():
                 break
-        print (f"looking for {client.user.display_name}'s stuff in {filepath}")
         if filepath:
             with open(filepath) as f:
                 data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
-                sd_prompt_prefix = data.get("sd_prompt_prefix")
+                sd_prompt_selfie_prefix = data.get("sd_prompt_selfie_prefix")
                 sd_prompt_suffix = data.get("sd_prompt_suffix")
                 sd_neg_prompt = data.get("sd_neg_prompt")
-
+            if sd_prompt_selfie_prefix and 'selfie' in payload["prompt"]: 
+                payload["width"] = 512
+                payload["height"] = 768
+                payload["prompt"] = f'{sd_prompt_selfie_prefix} {image_prompt}'
+            if sd_prompt_selfie_prefix:
+                payload["prompt"] += " " + sd_prompt_suffix
             if sd_neg_prompt: payload["negative_prompt"] = sd_neg_prompt
-            if sd_prompt_prefix: payload["prompt"] = sd_prompt_prefix + " " + image_prompt
-            if sd_prompt_prefix: payload["prompt"] += " "+sd_prompt_suffix
 
         task = asyncio.ensure_future(generate_image_with_a1111(payload))
         try:
             await asyncio.wait_for(task, timeout=25)
         except asyncio.TimeoutError:
-            await ctx.send("Nah cant find it")
+            await ctx.send("Error")
         else:
             file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
+            info_embed.title = "Image complete"
+            await picture_frame.edit(embed=info_embed, delete_after=5)
+            #info_embed.description = image_prompt
+            #info_embed.set_image(url=f"attachment://{client.user.display_name}.png")
+            #await picture_frame.delete()
             await ctx.send(file=file)
+            
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
@@ -627,12 +538,8 @@ def generate_characters():
                 description = data.get("bot_description")
                 emoji = data.get("bot_emoji")
                 #custom emojis are like this <:sheila:576121845426814986> you get it by doing \:sheila:
-                print(emoji)
-                #if emoji:
-                #    emoji = discord.Emoji(name=emoji)
                 character["bot_description"] = description if description else None
                 character["bot_emoji"] = emoji if emoji else "💬" #🧠
-                print (character)
                 cards.append(character)
     return cards
 
@@ -644,12 +551,16 @@ class Dropdown(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         character = self.values[0]
-        await interaction.response.send_message(f'Selection: {character}')
-        self.disabled = True  # Supposed to hide dropdown after use. Doesn't seem to do the job.
+        #await interaction.response.send_message(f'Selection: {character}')
         await change_profile(self.ctx, character)
+        if self.view:
+            # Trying desperately to remove the dropdown menu after use, but none of these are working
+            self.view.stop()
+            self.view.is_finished() 
+            self.view.clear_items()
 
 @client.hybrid_command(description="Choose Character")
-@commands.cooldown(1, 60, commands.BucketType.guild)
+@commands.cooldown(1, 600, commands.BucketType.guild)
 @app_commands.describe()
 async def character(ctx):
     view = DropdownView(ctx)
@@ -657,7 +568,6 @@ async def character(ctx):
         if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
             remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
             remaining_cooldown = total_seconds = remaining_cooldown.total_seconds()
-
             await ctx.channel.send(f'`Please wait {ceil_timedelta(remaining_cooldown)} before changing character again`')
     else:
         await ctx.send('Choose Character:', view=view)
@@ -667,16 +577,54 @@ class DropdownView(discord.ui.View):
         super().__init__()
         self.add_item(Dropdown(ctx))
 
+class LLMUserInputs():
+    def __init__(self):
+        self.settings = {
+        "text": "",
+        "state": {
+            "max_new_tokens": 400, #200?
+            "seed": -1.0,
+            "temperature": 0.7,
+            "top_p": 0.1,
+            "top_k": 40,
+            "typical_p": 1,
+            "repetition_penalty": 1.18,
+            "encoder_repetition_penalty": 1,
+            "no_repeat_ngram_size": 0,
+            "min_length": 50,
+            "do_sample": True,
+            "penalty_alpha": 0,
+            "num_beams": 1,
+            "length_penalty": 1,
+            "early_stopping": False,
+            "add_bos_token": True,
+            "ban_eos_token": False, 
+            "skip_special_tokens": True,
+            "truncation_length": 2048,
+            "custom_stopping_strings": '"### Assistant","### Human"',
+            "name1": "",
+            "name2": client.user.display_name,
+            "greeting": "",
+            "context": client.llm_context,
+            "end_of_turn": "",
+            "chat_prompt_size": 2048,
+            "chat_generation_attempts": 1,
+            "stop_at_newline": False,
+            "mode": "cai-chat"
+        },
+        "regenerate": False,
+        "_continue": False
+    } 
+
 class Behavior():
     def __init__(self):
         """ Settings for the bot's behavior. Intended to be accessed via a command in the future """
         self.learn_about_and_use_guild_emojis = None # Considering a specific command that randomly asks about one unknown emoji
-        self.take_notes_about_users = None # Will consume tokens to loop this back into the context but could be worth it
+        self.take_notes_about_users = None # Will consume tokens to loop this back into the context but could be worth it to fake a long term memory
         self.read_chatlog = None # Feed a few lines on character change from the previous chat session into context to make characters aware of each other.
         """ Those above are not yet implemented and possibly terrible ideas """
         self.change_username_with_character = True
         self.change_avatar_with_character = True
-        self.main_channel = None # Why not set the channel in here via bot commands instead of hardcoding like a maniac.
         self.only_speak_when_spoken_to = True
         self.ignore_parenthesis = True
         self.reply_to_itself = 0
@@ -685,13 +633,17 @@ class Behavior():
         self.go_wild_in_channel = True 
         self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
-
-        import sqlite3
         conn = sqlite3.connect('bot.db')
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS emojis (emoji, meaning)''') # set up command for bot to ask and learn about emojis
-        c.execute('''CREATE TABLE IF NOT EXISTS config (setting, value)''') # future long term storage for main channel etc
+        c.execute('''CREATE TABLE IF NOT EXISTS emojis (emoji TEXT UNIQUE, meaning TEXT)''') # set up command for bot to ask and learn about emojis
+        c.execute('''CREATE TABLE IF NOT EXISTS config (setting TEXT UNIQUE, value TEXT)''') # stores settings such as main_channel
         #c.execute('''CREATE TABLE IF NOT EXISTS usernotes (users, message, notes, keywords)''')
+        c.execute('''SELECT value FROM config WHERE setting = ?''', ('main_channel',))
+        result = c.fetchone()
+        if result is not None:
+            self.main_channel = int(result[0])
+        else:
+            self.main_channel = None
         conn.commit()
         conn.close()
     
@@ -703,7 +655,7 @@ class Behavior():
             last_conversation_time = self.user_conversations[user_id]
             time_since_last_conversation = datetime.now() - last_conversation_time
             if time_since_last_conversation.total_seconds() < self.conversation_recency:
-                logging.info(f'behavior: {user_id} is in active conversation')
+                #logging.info(f'behavior: {user_id} is in active conversation')
                 return True
             else:
                 return False
@@ -715,6 +667,7 @@ class Behavior():
         if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == self.main_channel:
             """ if using this bot's name in the main channel and another bot is speaking """
             reply = self.probability_to_reply(self.reply_to_bots_when_adressed)
+            #logging.info(f'behavior: reply_to_bots_when_adressed triggered {reply=}')
             if 'bye' in message.clean_content.lower():
                 """ if other bot is trying to say goodbye, just stop replying so it doesn't get awkward """
                 return False
@@ -730,22 +683,25 @@ class Behavior():
                     or any(word in message.content.lower() for word in client.user.display_name.lower().split())) \
                 or (self.in_active_conversation(message.author.id) and message.channel.id == self.main_channel):
             """ If bot is set to only speak when spoken to and someone uses its name
-                or if is in an active conversation with the user in the main channel, we reply. """
-            logging.info(f'behavior: Only_speak_when_spoken_to triggered')
+                or if is in an active conversation with the user in the main channel, we reply. 
+                This is a messy one. """
+            #logging.info(f'behavior: only_speak_when_spoken_to triggered')
             return True
         else:
             reply = False 
+            #logging.info(f'behavior: only_speak_when_spoken_to triggered {reply=}')
 
-        if message.author.bot and message.channel.id == self.main_channel: reply = self.probability_to_reply(self.chance_to_reply_to_other_bots)
+        if message.author.bot and message.channel.id == self.main_channel: 
+            reply = self.probability_to_reply(self.chance_to_reply_to_other_bots)
         if self.go_wild_in_channel and message.channel.id == self.main_channel: 
             reply = True
-            logging.info(f'behavior: {reply=}')
+            #logging.info(f'behavior: go_wild_in_channel {reply=}')
         if message.author == client.user: 
             reply = self.probability_to_reply(self.reply_to_itself)
-            logging.info(f'behavior: {reply=}')
+            #logging.info(f'behavior: reply_to_itself {reply=}')
         if reply == True: 
             self.update_user_dict(message.author.id)
-            logging.info(f'behavior: {reply=}')
+            #logging.info(f'behavior: {reply=}')
         return reply
 
     def probability_to_reply(self, probability):
@@ -764,7 +720,7 @@ def check_num_in_queue(message):
     return user_list_in_que.count(user)
 
 async def generate_image_with_a1111(payload):
-    print(payload)
+    #print(payload)
     response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
     r = response.json()
 
@@ -780,6 +736,15 @@ async def generate_image_with_a1111(payload):
         pnginfo.add_text("parameters", response2.json().get("info"))
         image.save(f'{client.user.display_name}.png', pnginfo=pnginfo)
     return image
+
+async def get_progress():
+    url = "http://127.0.0.1:7860/sdapi/v1/progress"
+    response = await loop.run_in_executor(None, requests.get, url)
+    if response.status_code == 200:
+        data = response.json()
+        print(data)
+    else:
+        print("Error:", response.status_code)
 
 if not hasattr(client, 'behavior'):
     client.behavior = Behavior()    
