@@ -6,10 +6,11 @@ Can use A1111 if it is in api mode with `/pics` command:
 
 ![image](https://user-images.githubusercontent.com/37743453/235309643-316b0f68-58d6-4023-bb4b-d86d2a212ce5.png)
 
+Can also just ask directly to `take a selfie` or `take a picture`:
+![image](https://user-images.githubusercontent.com/37743453/235515685-4b80770c-509e-4afa-8cb1-5b539b6bc578.png)
 
-<div align="center">
-  <video src="https://user-images.githubusercontent.com/894305/223963813-18e58d3c-4f9b-479c-8cdb-a2ad0df935c3.mp4" width=400/>
-</div>
+
+
 
 # Setup
 
