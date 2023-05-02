@@ -24,7 +24,7 @@ Note the additions to the Llayla character in the characters folder, showing how
 
 4. Open the `cmd` file that came with the one-click installer
 
-5. Install discord.py with `pip install discord` and sqlite3 with `pip install sqlite3`
+5. Install discord.py with `pip install discord`
 
 6. Run the bot with `python bot.py`
 
