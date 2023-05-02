@@ -12,6 +12,12 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import torch
+import io
+import base64
+import yaml
+from PIL import Image, PngImagePlugin
+import requests
+import sqlite3
 
 ### Replace TOKEN with discord bot token
 TOKEN = "YOURDISCORDBOTTOKEN"
