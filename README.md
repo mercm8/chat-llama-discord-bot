@@ -9,8 +9,9 @@ Can use A1111 if it is in api mode with `/pics` command:
 Can also just ask directly to `take a selfie` or `take a picture`:
 
 ![image](https://user-images.githubusercontent.com/37743453/235515685-4b80770c-509e-4afa-8cb1-5b539b6bc578.png)
+![image](https://user-images.githubusercontent.com/37743453/235619741-b7eb9c47-860f-4d08-ad99-3ef959d82241.png)
 
-Note the additions to the Llayla character in the characters folder, showing how to provide optional SD prompts the bot can use when taking pictures or selfies, if you're after a particular style or look.
+Note the additions to the Llayla character in the characters folder, showing how to provide optional SD prompts the bot can use when taking pictures or selfies, if you're after a particular style or look. It will use whatever model is loaded in the webgui of Automatic 1111.
 
 
 # Setup
