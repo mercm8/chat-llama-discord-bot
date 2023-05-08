@@ -295,7 +295,7 @@ async def change_profile(ctx, character):
                     with open(picture_path, 'rb') as f:
                         picture = f.read()
                     await client.user.edit(avatar=picture)
-            new_char = load_character(character, '', '', '')
+            new_char = load_character(character, '', '', '', 'cai-chat')
             greeting = new_char[3]
             ctx.bot.llm_context = new_char[4]
             #await send_long_message(ctx.channel, greeting)
@@ -364,7 +364,7 @@ async def llm_gen(message, queues):
 async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
-        client.llm_context = load_character(client.user.display_name, '', '', '')[4]
+        client.llm_context = load_character(client.user.display_name, '', '', '', 'cai-chat')[4]
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()    
     logging.info("bot ready")
@@ -616,7 +616,8 @@ class LLMUserInputs():
             "chat_prompt_size": 2048,
             "chat_generation_attempts": 1,
             "stop_at_newline": False,
-            "mode": "cai-chat"
+            "mode": "cai-chat",
+            "stream": True
         },
         "regenerate": False,
         "_continue": False
