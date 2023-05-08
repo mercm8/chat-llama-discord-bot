@@ -1,15 +1,18 @@
 # ChatLLaMA Discord Bot
 
-A Discord Bot for chatting with LLaMA, Vicuna, Alpaca, or any other LLaMA-based model. It's not as good as ChatGPT but LLaMA and its derivatives are pretty impressive on their own. Tag the bot with it's @username or mention it by name to talk to it. Give it a channel of its own to avoid having to tag it every time. Use `/character` to change to other characters in your character folder. To clear chat history with LLaMA or change the initial prompt, use `/reset`. Sometimes LLaMA will get stuck or you will want to change the initial prompt to something more interesting so `/reset` is well used.
+A Discord Bot for chatting with LLaMA, Vicuna, Alpaca, or any other LLaMA-based model. It's not as good as ChatGPT but LLaMA and its derivatives are pretty impressive on their own. Tag the bot with it's `@username` or mention it by name to talk to it. Give it a channel of its own to avoid having to tag it every time. Use `/character` to change to other characters in your character folder. To clear chat history with LLaMA or change the initial prompt, use `/reset`. Sometimes LLaMA will get stuck or you will want to change the initial prompt to something more interesting so `/reset` is well used.
 
 Can use A1111 if it is in api mode with `/pics` command: 
 
 ![image](https://user-images.githubusercontent.com/37743453/235309643-316b0f68-58d6-4023-bb4b-d86d2a212ce5.png)
 
+Can also just ask directly to `take a selfie` or `take a picture`:
 
-<div align="center">
-  <video src="https://user-images.githubusercontent.com/894305/223963813-18e58d3c-4f9b-479c-8cdb-a2ad0df935c3.mp4" width=400/>
-</div>
+![image](https://user-images.githubusercontent.com/37743453/235515685-4b80770c-509e-4afa-8cb1-5b539b6bc578.png)
+![image](https://user-images.githubusercontent.com/37743453/235619741-b7eb9c47-860f-4d08-ad99-3ef959d82241.png)
+
+Note the additions to the Llayla character in the characters folder, showing how to provide optional SD prompts the bot can use when taking pictures or selfies, if you're after a particular style or look. It will use whatever model is loaded in the webgui of Automatic 1111.
+
 
 # Setup
 
