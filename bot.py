@@ -25,9 +25,9 @@ TOKEN = "YOURDISCORDBOTTOKEN"
 
 A1111 = "http://127.0.0.1:7860"
 
-# logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
-#                     datefmt="%a, %d %b %Y %H:%M:%S +0000", 
-#                     level=logging.WARNING)
+logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
+                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+                    level=logging.DEBUG)
 
 
 # Intercept custom bot arguments
@@ -279,7 +279,7 @@ def ceil_timedelta(td):
 async def change_profile(ctx, character):
     """ Changes username and avatar of bot. """
     """ Will be rate limited by discord api if used too often. Needs a cooldown. 10 minute value is arbitrary. """
-    #name1, name2, picture, greeting, context, end_of_turn, chat_html_wrapper = load_character(character, '', '', '')
+    #name1, name2, picture, greeting, context, end_of_turn, chat_html_wrapper = load_character(character, '', '', '', '')
     if hasattr(ctx.bot, "last_change"):
         if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
             remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
@@ -372,7 +372,6 @@ async def on_ready():
 
   
 async def create_image_prompt(llm_prompt):
-    """ Oh man I hate repeating all this but CBA refactoring the message code"""
     user_input = LLMUserInputs().settings
     user_input["text"] = llm_prompt
     user_input["state"]["name1"] = ""
@@ -386,23 +385,28 @@ async def create_image_prompt(llm_prompt):
 
 @client.event
 async def on_message(message):
+    text = message.clean_content
     ctx = await client.get_context(message)
-    if client.behavior.main_channel == None and client.user.display_name in message.clean_content:
-        """ User has not set a main channel for bot but is speaking to it. 
+    if client.behavior.main_channel == None and client.user.mentioned_in(message):
+        """ User has not set a main channel for the bot, but is speaking to it. 
         Setting current channel as main channel for bot which will also instruct 
         user on how to change main channel in the embed notification """
         main(ctx)
 
-    if 'take a selfie' in message.clean_content.lower() or 'take a picture' in message.clean_content.lower():
-        await pic(ctx, prompt=message.clean_content)
+    if 'take a selfie' in text.lower() or 'take a picture' in text.lower():
+        await pic(ctx, prompt=text)
         return
+        """ Need to trigger the LLM here so it's aware of the picture it's sending to the user, or else it gets confused when the user responds to the image. 
+        It's also awkward if the user asks it to take a picture but the LLM goes into "as a language model" mode and says it cant take a picture, but then sends a picture anyway
+        With more processing power it would be fun to do a sentiment analysis on the LLMs response and then generate an image based on that ... 
+        """
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
     else:
-        return # Bot does not reply to this message.
+        return # Bot does not reply to this message.    
     
     user_input = LLMUserInputs().settings
-    user_input["text"] = message.clean_content
+    user_input["text"] = text
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
@@ -451,8 +455,8 @@ async def pic(ctx, prompt=None):
         info_embed.description = " "
         picture_frame = await ctx.reply(embed=info_embed)
         if not prompt:
-            llm_prompt = """Describe the scene as if it were a picture, 
-            also describe yourself and refer to yourself in the third person 
+            llm_prompt = """Describe the scene as if it were a picture, also 
+            describe yourself and refer to yourself in the third person 
             if the picture is of you. Include as much detail as you can."""
             image_prompt = await create_image_prompt(llm_prompt)
         else:
@@ -461,7 +465,7 @@ async def pic(ctx, prompt=None):
         info_embed.description = image_prompt
         await picture_frame.edit(embed=info_embed)
         payload = { "prompt": image_prompt, "width": 768, "height": 512, "steps": 20, "restore_faces": True } 
-        # Seems to use the currently loaded model in A1111. How much of the payload is inherited?
+        # Seems to use the currently loaded model in A1111. How much is inherited?
 
         # Looking for SD prompts in the character files
         filepath = next(Path("characters").glob(f"{client.user.display_name}.{{yml,yaml,json}}"), None)
@@ -472,6 +476,7 @@ async def pic(ctx, prompt=None):
         if filepath:
             with open(filepath) as f:
                 data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
+                print(data)
                 sd_prompt_selfie_prefix = data.get("sd_prompt_selfie_prefix")
                 sd_prompt_suffix = data.get("sd_prompt_suffix")
                 sd_neg_prompt = data.get("sd_neg_prompt")
@@ -495,8 +500,7 @@ async def pic(ctx, prompt=None):
             #info_embed.description = image_prompt
             #info_embed.set_image(url=f"attachment://{client.user.display_name}.png")
             #await picture_frame.delete()
-            await ctx.send(file=file)
-            
+            await ctx.send(file=file)            
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
@@ -607,7 +611,7 @@ class LLMUserInputs():
             "ban_eos_token": False, 
             "skip_special_tokens": True,
             "truncation_length": 2048,
-            "custom_stopping_strings": '"### Assistant","### Human"',
+            "custom_stopping_strings": '"### Assistant","### Human","</END>"',
             "name1": "",
             "name2": client.user.display_name,
             "greeting": "",
@@ -636,7 +640,7 @@ class Behavior():
         self.ignore_parenthesis = True
         self.reply_to_itself = 0
         self.chance_to_reply_to_other_bots = 0.3 #Reduce this if bot is too chatty with other bots
-        self.reply_to_bots_when_adressed = random.random()
+        self.reply_to_bots_when_adressed = 0.5 #random.random()
         self.go_wild_in_channel = True 
         self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
@@ -670,7 +674,10 @@ class Behavior():
             return False
 
     def bot_should_reply(self, message):
+        """ Beware spaghetti ahead """
         reply = False
+        if message.author == client.user: 
+            return False
         if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == self.main_channel:
             """ if using this bot's name in the main channel and another bot is speaking """
             reply = self.probability_to_reply(self.reply_to_bots_when_adressed)
@@ -703,9 +710,6 @@ class Behavior():
         if self.go_wild_in_channel and message.channel.id == self.main_channel: 
             reply = True
             #logging.info(f'behavior: go_wild_in_channel {reply=}')
-        if message.author == client.user: 
-            reply = self.probability_to_reply(self.reply_to_itself)
-            #logging.info(f'behavior: reply_to_itself {reply=}')
         if reply == True: 
             self.update_user_dict(message.author.id)
             #logging.info(f'behavior: {reply=}')
