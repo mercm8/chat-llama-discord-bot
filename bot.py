@@ -25,9 +25,9 @@ TOKEN = "YOURDISCORDBOTTOKEN"
 
 A1111 = "http://127.0.0.1:7860"
 
-logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
-                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
-                    level=logging.DEBUG)
+#logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
+#                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+#                    level=logging.DEBUG)
 
 
 # Intercept custom bot arguments
