@@ -364,7 +364,7 @@ async def llm_gen(message, queues):
 async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
-        client.llm_context = load_character(client.user.display_name, '', '', '', 'cai-chat')[4]
+        client.llm_context = load_character(client.user.display_name, '', '', '')[4]
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()    
     logging.info("bot ready")
