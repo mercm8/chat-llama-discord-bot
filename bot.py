@@ -22,7 +22,7 @@ import sqlite3
 ### Edit config.py to include your Discord token, and A1111 api URL if necessary.
 import config
 TOKEN = config.discord['TOKEN'] 
-A1111 = config.discord['A1111'] 
+A1111 = config.sd['A1111'] 
 
 logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
                     datefmt="%a, %d %b %Y %H:%M:%S +0000", 
