@@ -19,7 +19,7 @@ from PIL import Image, PngImagePlugin
 import requests
 import sqlite3
 
-### Replace TOKEN with discord bot token, update A1111 address if necessary.
+### Edit config.py to include your Discord token.
 import config
 TOKEN = config.discord['TOKEN'] 
 A1111 = "http://127.0.0.1:7860"
