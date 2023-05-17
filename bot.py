@@ -394,31 +394,33 @@ async def on_message(message):
     text = message.clean_content
     ctx = await client.get_context(message)
 
-    if client.behavior.main_channel == None and client.user.mentioned_in(message):
+    if client.behavior.main_channels == None and client.user.mentioned_in(message):
         """ User has not set a main channel for the bot, but is speaking to it. 
         Likely first time use. Setting current channel as main channel for bot which will
         also instruct user on how to change main channel in the embed notification """
         main(ctx)
-    
-    image_triggers = ['take a picture', 'take another picture','generate an image','take a selfie','take another selfie'] # Might want to move these triggers into the yaml file to let users localize/customize
+    image_triggers = ['take a picture', 'take another picture','generate an image','take a selfie','take another selfie'] 
+    # Might want to move these triggers into the yaml file to let users localize/customize
     if (any(word in text.lower() for word in image_triggers) or \
-        Behavior.probability_to_reply(client.behavior.adventure_mode)) \
+        (random.random() < client.behavior.reply_with_image)) \
         and a1111_online() and client.behavior.bot_should_reply(message):
-        """ Need to trigger the LLM here so it's aware of the picture it's sending to the user,
+
+        """ Triggering the LLM here so it's aware of the picture it's sending to the user,
         or else it gets 'confused' when the user responds to the image. """
+
         if 'selfie' in text:
             llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
-            Include your appearance, your current state of clothing, your surroundings and what you are doing right now.
+            Include your appearance, your current state of clothing, your surroundings 
+            and what you are doing right now.
             """
         else: 
-            llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}".
-            Describe the image in vivid detail as if you were describing it to a blind person.
-            """
-        llm_prompt += "Describe the image in vivid detail as if you were describing it to a blind person. The description in your response will be sent to an image generation API."
+            llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}"."""
+
+        llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
+        The description in your response will be sent to an image generation API."""
         
         async with message.channel.typing():
             image_prompt = await create_image_prompt(llm_prompt)
-            print(image_prompt)
             await pic(ctx, prompt=image_prompt)
             return
     
@@ -447,10 +449,11 @@ async def on_message(message):
 
 @client.hybrid_command(description="Set current channel as main channel for bot to auto reply in without needing to be called")
 async def main(ctx):
-    ctx.bot.behavior.main_channel = ctx.message.channel.id
+    ctx.bot.behavior.main_channels.append(ctx.message.channel.id)
     conn = sqlite3.connect('bot.db')
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channel', f'{ctx.message.channel.id}'))
+    #c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channels', f'{ctx.message.channel.id}'))
+    c.execute('''INSERT OR REPLACE INTO main_channels (channel_id) VALUES (?)''', (ctx.message.channel.id,))
     conn.commit()
     conn.close()
     await ctx.reply(f'Bot main channel set to {ctx.message.channel.mention}')
@@ -523,7 +526,8 @@ async def pic(ctx, prompt=None):
         try:
             await asyncio.wait_for(task, timeout=25)
         except asyncio.TimeoutError:
-            await ctx.send("`Timed out.`")
+            info_embed.title = "Image complete"
+            await picture_frame.edit(delete_after=15)
         else:
             file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
             info_embed.title = "Image complete"
@@ -546,9 +550,12 @@ async def reset(ctx, prompt_new=prompt, your_name_new=your_name, llamas_name_new
     llamas_name = ctx.bot.user.display_name
     reply_count = 0
     shared.stop_everything = True
-    clear_chat_log(your_name, llamas_name, "", "","cai-chat")
+    clear_chat_log("", "cai-chat")
     await change_profile(ctx, llamas_name)
     prompt = ctx.bot.llm_context
+    info_embed.title = f"Conversation with {llamas_name} reset"
+    info_embed.description = ""
+    await ctx.reply(embed=info_embed)    
     logging.info("conversation reset: {'replies': " + str(reply_count) + ", 'your_name': '" + your_name + "', 'llamas_name': '" + llamas_name + "', 'prompt': '" + prompt + "'}")
     #reset_embed.timestamp = datetime.now() - timedelta(hours=3)
     #reset_embed.description = "Replies: " + str(reply_count) + "\nYour name: " + your_name + "\nLLaMA's name: " + llamas_name + "\nPrompt: " + prompt
@@ -669,7 +676,7 @@ class Behavior():
         self.take_notes_about_users = None # Will consume tokens to loop this back into the context but could be worth it to fake a long term memory
         self.read_chatlog = None # Feed a few lines on character change from the previous chat session into context to make characters aware of each other.
         """ Those above are not yet implemented and possibly terrible ideas """
-        self.adventure_mode = 0 # Chance for the bot to respond with an image instead of just text
+        self.reply_with_image = 0 # Chance for the bot to respond with an image instead of just text
         self.change_username_with_character = True
         self.change_avatar_with_character = True
         self.only_speak_when_spoken_to = True
@@ -682,15 +689,17 @@ class Behavior():
         self.conversation_recency = 600
         conn = sqlite3.connect('bot.db')
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS emojis (emoji TEXT UNIQUE, meaning TEXT)''') # set up command for bot to ask and learn about emojis
-        c.execute('''CREATE TABLE IF NOT EXISTS config (setting TEXT UNIQUE, value TEXT)''') # stores settings such as main_channel
+        c.execute('''CREATE TABLE IF NOT EXISTS emojis (emoji TEXT UNIQUE, meaning TEXT)''')    # set up command for bot to ask and learn about emojis
+        c.execute('''CREATE TABLE IF NOT EXISTS config (setting TEXT UNIQUE, value TEXT)''')    # stores settings
+        c.execute('''CREATE TABLE IF NOT EXISTS main_channels (channel_id TEXT UNIQUE)''')      # new separate table for main_channels 
         #c.execute('''CREATE TABLE IF NOT EXISTS usernotes (users, message, notes, keywords)''')
-        c.execute('''SELECT value FROM config WHERE setting = ?''', ('main_channel',))
-        result = c.fetchone()
-        if result is not None:
-            self.main_channel = int(result[0])
+        c.execute('''SELECT channel_id FROM main_channels''')
+        result = c.fetchall()
+        print(result)
+        if result is not []:
+            self.main_channels = result
         else:
-            self.main_channel = None
+            self.main_channels = None
         conn.commit()
         conn.close()
     
@@ -714,7 +723,7 @@ class Behavior():
         reply = False
         if message.author == client.user: 
             return False
-        if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id == self.main_channel:
+        if message.author.bot and client.user.display_name.lower() in message.clean_content.lower() and message.channel.id in self.main_channels:
             """ if using this bot's name in the main channel and another bot is speaking """
             reply = self.probability_to_reply(self.reply_to_bots_when_adressed)
             #logging.info(f'behavior: reply_to_bots_when_adressed triggered {reply=}')
@@ -725,13 +734,13 @@ class Behavior():
         if self.ignore_parenthesis and \
             (message.content.startswith('(') and message.content.endswith(')') \
             or \
-            (message.content.startswith(':') and message.content.endswith(':'))):
-            """ if someone is simply using an :emoji: or (speaking like this) """
+            (message.content.startswith('<:') and message.content.endswith(':>'))):
+            """ if someone is simply using an <:emoji:> or (speaking like this) """
             return False
         
         if (self.only_speak_when_spoken_to and client.user.mentioned_in(message) \
                     or any(word in message.content.lower() for word in client.user.display_name.lower().split())) \
-                or (self.in_active_conversation(message.author.id) and message.channel.id == self.main_channel):
+                or (self.in_active_conversation(message.author.id) and message.channel.id in self.main_channels):
             """ If bot is set to only speak when spoken to and someone uses its name
                 or if is in an active conversation with the user in the main channel, we reply. 
                 This is a messy one. """
@@ -741,9 +750,9 @@ class Behavior():
             reply = False 
             #logging.info(f'behavior: only_speak_when_spoken_to triggered {reply=}')
 
-        if message.author.bot and message.channel.id == self.main_channel: 
+        if message.author.bot and message.channel.id in self.main_channels: 
             reply = self.probability_to_reply(self.chance_to_reply_to_other_bots)
-        if self.go_wild_in_channel and message.channel.id == self.main_channel: 
+        if self.go_wild_in_channel and message.channel.id in self.main_channels: 
             reply = True
             #logging.info(f'behavior: go_wild_in_channel {reply=}')
         if reply == True: 
