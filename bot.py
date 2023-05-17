@@ -19,16 +19,14 @@ from PIL import Image, PngImagePlugin
 import requests
 import sqlite3
 
-### Replace TOKEN with discord bot token
-TOKEN = "YOURDISCORDBOTTOKEN"
-# Once the bot is online, you can use the /main command to set a channel for it
-
+### Replace TOKEN with discord bot token, update A1111 address if necessary.
+import config
+TOKEN = config.discord['TOKEN'] 
 A1111 = "http://127.0.0.1:7860"
 
-#logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
-#                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
-#                    level=logging.DEBUG)
-
+logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
+                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+                    level=logging.DEBUG)
 
 # Intercept custom bot arguments
 import sys
@@ -298,7 +296,6 @@ async def change_profile(ctx, character):
             new_char = load_character(character, '', '', '', 'cai-chat')
             greeting = new_char[3]
             ctx.bot.llm_context = new_char[4]
-            #await send_long_message(ctx.channel, greeting)
             file = discord.File(picture_path, filename=f'{character}.png')
             greeting_embed.title=character
             greeting_embed.description=greeting
@@ -313,8 +310,7 @@ async def change_profile(ctx, character):
             logging.warning(e)
 
     if ctx.bot.behavior.read_chatlog:
-        """  Allow bot to read recent chatlog somehow. 
-        Might want to do this somewhere else. 
+        """  Allow bot to read recent chatlog. Might want to do this somewhere else. 
         Context is being fed in load_character which is external. 
         Maybe insert it in shared.history from here? 
         Need to find out how that works. """
@@ -366,11 +362,20 @@ async def on_ready():
         """ Loads character profile based on Bot's display name """
         client.llm_context = load_character(client.user.display_name, '', '', '')[4]
     if not hasattr(client, 'behavior'):
-        client.behavior = Behavior()    
+        client.behavior = Behavior()
     logging.info("bot ready")
     await client.tree.sync()
 
-  
+def a1111_online():
+    try:
+        r = requests.get(f'{A1111}/')
+        status = r.raise_for_status()
+        #logging.info(status)
+        return True
+    except Exception as exc:
+        logging.warning(exc)
+        return False
+    
 async def create_image_prompt(llm_prompt):
     user_input = LLMUserInputs().settings
     user_input["text"] = llm_prompt
@@ -383,23 +388,45 @@ async def create_image_prompt(llm_prompt):
         last_resp = resp_clean
     return last_resp
 
+
 @client.event
 async def on_message(message):
     text = message.clean_content
     ctx = await client.get_context(message)
+
     if client.behavior.main_channel == None and client.user.mentioned_in(message):
         """ User has not set a main channel for the bot, but is speaking to it. 
-        Setting current channel as main channel for bot which will also instruct 
-        user on how to change main channel in the embed notification """
+        Likely first time use. Setting current channel as main channel for bot which will
+        also instruct user on how to change main channel in the embed notification """
         main(ctx)
-
-    if 'take a selfie' in text.lower() or 'take a picture' in text.lower():
-        await pic(ctx, prompt=text)
-        return
-        """ Need to trigger the LLM here so it's aware of the picture it's sending to the user, or else it gets confused when the user responds to the image. 
-        It's also awkward if the user asks it to take a picture but the LLM goes into "as a language model" mode and says it cant take a picture, but then sends a picture anyway
-        With more processing power it would be fun to do a sentiment analysis on the LLMs response and then generate an image based on that ... 
-        """
+    
+    image_triggers = ['take a picture', 'take another picture','generate an image','take a selfie','take another selfie'] # Might want to move these triggers into the yaml file to let users localize/customize
+    if (any(word in text.lower() for word in image_triggers) or \
+        Behavior.probability_to_reply(client.behavior.adventure_mode)) \
+        and a1111_online() and client.behavior.bot_should_reply(message):
+        """ Need to trigger the LLM here so it's aware of the picture it's sending to the user,
+        or else it gets 'confused' when the user responds to the image. """
+        if 'selfie' in text:
+            llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
+            Include your appearance, your current state of clothing, your surroundings and what you are doing right now.
+            """
+        else: 
+            llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}".
+            Describe the image in vivid detail as if you were describing it to a blind person.
+            """
+        llm_prompt += "Describe the image in vivid detail as if you were describing it to a blind person. The description in your response will be sent to an image generation API."
+        
+        async with message.channel.typing():
+            image_prompt = await create_image_prompt(llm_prompt)
+            print(image_prompt)
+            await pic(ctx, prompt=image_prompt)
+            return
+    
+    if not a1111_online():
+        info_embed.title = f"A1111 api is not running at {A1111}"
+        info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+        await ctx.reply(embed=info_embed)
+    
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
     else:
@@ -433,15 +460,7 @@ async def main(ctx):
 async def helpmenu(ctx):
     await ctx.send(embed=info_embed)
 
-def a1111_online():
-    try:
-        r = requests.get(f'{A1111}/')
-        status = r.raise_for_status()
-        logging.info(status)
-        return True
-    except Exception as exc:
-        logging.warning(exc)
-        return False
+
 
 @client.hybrid_command(description="Take a picture!")
 @app_commands.describe(prompt="The initial prompt to contextualize LLaMA")
@@ -455,17 +474,16 @@ async def pic(ctx, prompt=None):
         info_embed.description = " "
         picture_frame = await ctx.reply(embed=info_embed)
         if not prompt:
-            llm_prompt = """Describe the scene as if it were a picture, also 
-            describe yourself and refer to yourself in the third person 
-            if the picture is of you. Include as much detail as you can."""
+            llm_prompt = """Describe the scene as if it were a picture to a blind person,
+            also describe yourself and refer to yourself in the third person if the picture is of you.
+            Include as much detail as you can."""
             image_prompt = await create_image_prompt(llm_prompt)
         else:
             image_prompt = prompt
         info_embed.title = "Generating image ..."
-        info_embed.description = image_prompt
+        #info_embed.description = image_prompt
         await picture_frame.edit(embed=info_embed)
         payload = { "prompt": image_prompt, "width": 768, "height": 512, "steps": 20, "restore_faces": True } 
-        # Seems to use the currently loaded model in A1111. How much is inherited?
 
         # Looking for SD prompts in the character files
         filepath = next(Path("characters").glob(f"{client.user.display_name}.{{yml,yaml,json}}"), None)
@@ -476,31 +494,46 @@ async def pic(ctx, prompt=None):
         if filepath:
             with open(filepath) as f:
                 data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
-                print(data)
-                sd_prompt_selfie_prefix = data.get("sd_prompt_selfie_prefix")
-                sd_prompt_suffix = data.get("sd_prompt_suffix")
-                sd_neg_prompt = data.get("sd_neg_prompt")
-            if sd_prompt_selfie_prefix and 'selfie' in payload["prompt"]: 
+                restore_faces = data.get("restore_faces")
+                positive_prompt_prefix = data.get("positive_prompt_prefix")
+                positive_prompt_suffix = data.get("positive_prompt_suffix")
+                negative_prompt = data.get("negative_prompt")
+                presets = data.get("presets")
+            if 'selfie' in payload["prompt"]: 
                 payload["width"] = 512
                 payload["height"] = 768
-                payload["prompt"] = f'{sd_prompt_selfie_prefix} {image_prompt}'
-            if sd_prompt_selfie_prefix:
-                payload["prompt"] += " " + sd_prompt_suffix
-            if sd_neg_prompt: payload["negative_prompt"] = sd_neg_prompt
+            if 'instagram' in payload["prompt"]: 
+                payload["width"] = 512
+                payload["height"] = 512
+            if restore_faces == False:
+                payload["restore_faces"] = False
+            if positive_prompt_prefix: 
+                payload["prompt"] = f'{positive_prompt_prefix} {image_prompt}'
+            if positive_prompt_suffix:
+                payload["prompt"] += " " + positive_prompt_suffix
+            if negative_prompt: payload["negative_prompt"] = negative_prompt
+            if presets:
+                for preset in presets:
+                    if preset['trigger'] in payload["prompt"]:
+                        payload["prompt"] += " " + preset['positive_prompt']
+                        payload["negative_prompt"] += " " + preset['negative_prompt']
+
 
         task = asyncio.ensure_future(generate_image_with_a1111(payload))
         try:
             await asyncio.wait_for(task, timeout=25)
         except asyncio.TimeoutError:
-            await ctx.send("Error")
+            await ctx.send("`Timed out.`")
         else:
             file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
             info_embed.title = "Image complete"
-            await picture_frame.edit(embed=info_embed, delete_after=5)
+            #await picture_frame.edit(embed=info_embed, delete_after=5)
+            await picture_frame.edit(delete_after=5)
             #info_embed.description = image_prompt
             #info_embed.set_image(url=f"attachment://{client.user.display_name}.png")
             #await picture_frame.delete()
-            await ctx.send(file=file)            
+            await ctx.send(file=file)
+            await ctx.send(image_prompt)
 
 @client.hybrid_command(description="Reset the conversation with LLaMA")
 @app_commands.describe(
@@ -592,7 +625,7 @@ class LLMUserInputs():
         self.settings = {
         "text": "",
         "state": {
-            "max_new_tokens": 400, #200?
+            "max_new_tokens": 400,
             "seed": -1.0,
             "temperature": 0.7,
             "top_p": 0.1,
@@ -614,6 +647,8 @@ class LLMUserInputs():
             "custom_stopping_strings": '"### Assistant","### Human","</END>"',
             "name1": "",
             "name2": client.user.display_name,
+            "name1_instruct": "",
+            "name2_instruct": client.user.display_name,
             "greeting": "",
             "context": client.llm_context,
             "end_of_turn": "",
@@ -634,6 +669,7 @@ class Behavior():
         self.take_notes_about_users = None # Will consume tokens to loop this back into the context but could be worth it to fake a long term memory
         self.read_chatlog = None # Feed a few lines on character change from the previous chat session into context to make characters aware of each other.
         """ Those above are not yet implemented and possibly terrible ideas """
+        self.adventure_mode = 0 # Chance for the bot to respond with an image instead of just text
         self.change_username_with_character = True
         self.change_avatar_with_character = True
         self.only_speak_when_spoken_to = True
@@ -731,18 +767,16 @@ def check_num_in_queue(message):
     return user_list_in_que.count(user)
 
 async def generate_image_with_a1111(payload):
-    #print(payload)
+    print(payload)
     response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
     r = response.json()
 
     for i in r['images']:
         image = Image.open(io.BytesIO(base64.b64decode(i.split(",",1)[0])))
-
         png_payload = {
             "image": "data:image/png;base64," + i
         }
         response2 = requests.post(url=f'{A1111}/sdapi/v1/png-info', json=png_payload)
-
         pnginfo = PngImagePlugin.PngInfo()
         pnginfo.add_text("parameters", response2.json().get("info"))
         image.save(f'{client.user.display_name}.png', pnginfo=pnginfo)
