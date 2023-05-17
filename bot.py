@@ -293,7 +293,7 @@ async def change_profile(ctx, character):
                     with open(picture_path, 'rb') as f:
                         picture = f.read()
                     await client.user.edit(avatar=picture)
-            new_char = load_character(character, '', '', '', 'cai-chat')
+            new_char = load_character(character, '', '', '')
             greeting = new_char[3]
             ctx.bot.llm_context = new_char[4]
             file = discord.File(picture_path, filename=f'{character}.png')
