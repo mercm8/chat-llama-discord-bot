@@ -3,6 +3,7 @@ from pathlib import Path
 import asyncio
 import random
 import logging
+import logging.handlers
 import json
 import re
 import glob
@@ -25,8 +26,17 @@ TOKEN = config.discord['TOKEN']
 A1111 = config.sd['A1111'] 
 
 logging.basicConfig(format='%(levelname)s [%(asctime)s]: %(message)s (Line: %(lineno)d in %(funcName)s, %(filename)s )',
-                    datefmt="%a, %d %b %Y %H:%M:%S +0000", 
+                    datefmt='%Y-%m-%d %H:%M:%S', 
                     level=logging.DEBUG)
+
+handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+handler = logging.handlers.RotatingFileHandler(
+    filename='discord.log',
+    encoding='utf-8',
+    maxBytes=32 * 1024 * 1024,  # 32 MiB
+    backupCount=5,  # Rotate through 5 files
+)
+
 
 # Intercept custom bot arguments
 import sys
@@ -265,6 +275,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = commands.Bot(command_prefix=".", intents=intents)
 
+
+
 queues = []
 blocking = False
 reply_count = 0
@@ -418,7 +430,11 @@ async def on_message(message):
 
         llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
         The description in your response will be sent to an image generation API."""
-        
+        data = get_character_data(client.user.display_name)
+        override_llm_prompt = data.get("override_llm_prompt")
+        if override_llm_prompt == True: 
+            llm_prompt = text
+
         async with message.channel.typing():
             image_prompt = await create_image_prompt(llm_prompt)
             await pic(ctx, prompt=image_prompt)
@@ -453,19 +469,16 @@ async def main(ctx):
         ctx.bot.behavior.main_channels.append(ctx.message.channel.id)
         conn = sqlite3.connect('bot.db')
         c = conn.cursor()
-        #c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channels', f'{ctx.message.channel.id}'))
         c.execute('''INSERT OR REPLACE INTO main_channels (channel_id) VALUES (?)''', (ctx.message.channel.id,))
         conn.commit()
         conn.close()
         await ctx.reply(f'Bot main channel set to {ctx.message.channel.mention}')
-        #await ctx.message.channel.send(f'Bot main channel set to {ctx.message.channel.mention}')
     await ctx.reply(f'{ctx.message.channel.mention} already set as main channel')
 
 @client.hybrid_command(description="Display help menu")
 async def helpmenu(ctx):
+    info_embed = discord.Embed().from_dict(info_embed_json)
     await ctx.send(embed=info_embed)
-
-
 
 @client.hybrid_command(description="Take a picture!")
 @app_commands.describe(prompt="The initial prompt to contextualize LLaMA")
@@ -491,39 +504,39 @@ async def pic(ctx, prompt=None):
         payload = { "prompt": image_prompt, "width": 768, "height": 512, "steps": 20, "restore_faces": True } 
 
         # Looking for SD prompts in the character files
-        filepath = next(Path("characters").glob(f"{client.user.display_name}.{{yml,yaml,json}}"), None)
-        for extension in ["yml", "yaml", "json"]:
-            filepath = Path(f'characters/{client.user.display_name}.{extension}')
-            if filepath.exists():
-                break
-        if filepath:
-            with open(filepath) as f:
-                data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
-                restore_faces = data.get("restore_faces")
-                positive_prompt_prefix = data.get("positive_prompt_prefix")
-                positive_prompt_suffix = data.get("positive_prompt_suffix")
-                negative_prompt = data.get("negative_prompt")
-                presets = data.get("presets")
-            if 'selfie' in payload["prompt"]: 
-                payload["width"] = 512
-                payload["height"] = 768
-            if 'instagram' in payload["prompt"]: 
-                payload["width"] = 512
-                payload["height"] = 512
-            if restore_faces == False:
-                payload["restore_faces"] = False
-            if positive_prompt_prefix: 
-                payload["prompt"] = f'{positive_prompt_prefix} {image_prompt}'
-            if positive_prompt_suffix:
-                payload["prompt"] += " " + positive_prompt_suffix
-            if negative_prompt: payload["negative_prompt"] = negative_prompt
-            if presets:
-                for preset in presets:
-                    if preset['trigger'] in payload["prompt"]:
-                        payload["prompt"] += " " + preset['positive_prompt']
-                        payload["negative_prompt"] += " " + preset['negative_prompt']
+        data = get_character_data(client.user.display_name)
+        restore_faces = data.get("restore_faces")
+        positive_prompt_prefix = data.get("positive_prompt_prefix")
+        positive_prompt_suffix = data.get("positive_prompt_suffix")
+        negative_prompt = data.get("negative_prompt")
+        presets = data.get("presets")
+        if 'selfie' in payload["prompt"]: 
+            payload["width"] = 512
+            payload["height"] = 768
+        if 'instagram' in payload["prompt"]: 
+            payload["width"] = 512
+            payload["height"] = 512
+        if restore_faces == False:
+            payload["restore_faces"] = False
+        if positive_prompt_prefix: 
+            payload["prompt"] = f'{positive_prompt_prefix} {image_prompt}'
+        if positive_prompt_suffix:
+            payload["prompt"] += " " + positive_prompt_suffix
+        if negative_prompt: payload["negative_prompt"] = negative_prompt
+        if presets:
+            for preset in presets:
+                if preset['trigger'] in payload["prompt"]:
+                    payload["prompt"] += " " + preset['positive_prompt']
+                    payload["negative_prompt"] += " " + preset['negative_prompt']
 
-
+        # Make sure loras are not repeated
+        re_loras = r"\<lora:\w+:\d\.\d\>"
+        matches = re.findall(re_loras, payload["prompt"])
+        unique_loras = list(set(matches))
+        prompt = payload["prompt"]
+        for lora in unique_loras:
+            prompt = prompt.replace(lora,"", prompt.count(lora)-1)
+        payload["prompt"] = prompt
         task = asyncio.ensure_future(generate_image_with_a1111(payload))
         try:
             await asyncio.wait_for(task, timeout=25)
@@ -533,11 +546,7 @@ async def pic(ctx, prompt=None):
         else:
             file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
             info_embed.title = "Image complete"
-            #await picture_frame.edit(embed=info_embed, delete_after=5)
             await picture_frame.edit(delete_after=5)
-            #info_embed.description = image_prompt
-            #info_embed.set_image(url=f"attachment://{client.user.display_name}.png")
-            #await picture_frame.delete()
             await ctx.send(file=file)
             await ctx.send(image_prompt)
 
@@ -576,6 +585,17 @@ async def status(ctx):
     status_embed.description = msg
     
     await ctx.send(embed=status_embed)
+
+def get_character_data(character):
+    filepath = next(Path("characters").glob(f"{character}.{{yml,yaml,json}}"), None)
+    for extension in ["yml", "yaml", "json"]:
+        filepath = Path(f'characters/{character}.{extension}')
+        if filepath.exists():
+            break
+    if filepath:
+        with open(filepath) as f:
+            data = json.load(f) if filepath.suffix == ".json" else yaml.safe_load(f)
+            return data
 
 def generate_characters():
     cards = []
@@ -779,7 +799,6 @@ def check_num_in_queue(message):
     return user_list_in_que.count(user)
 
 async def generate_image_with_a1111(payload):
-    print(payload)
     response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
     r = response.json()
 
@@ -805,4 +824,4 @@ async def get_progress():
 
 if not hasattr(client, 'behavior'):
     client.behavior = Behavior()    
-client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True)
+client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
