@@ -293,7 +293,7 @@ async def change_profile(ctx, character):
                     with open(picture_path, 'rb') as f:
                         picture = f.read()
                     await client.user.edit(avatar=picture)
-            new_char = load_character(character, '', '', '', 'cai-chat')
+            new_char = load_character(character, '', '')
             greeting = new_char[3]
             ctx.bot.llm_context = new_char[4]
             file = discord.File(picture_path, filename=f'{character}.png')
@@ -360,7 +360,7 @@ async def llm_gen(message, queues):
 async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
-        client.llm_context = load_character(client.user.display_name, '', '', '')[4]
+        client.llm_context = load_character(client.user.display_name, '', '')[4]
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()
     logging.info("bot ready")
