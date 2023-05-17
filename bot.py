@@ -19,7 +19,7 @@ from PIL import Image, PngImagePlugin
 import requests
 import sqlite3
 
-### Edit config.py to include your Discord token, and A1111 api URL if necessary.
+### Replace TOKEN with discord bot token, update A1111 address if necessary.
 import config
 TOKEN = config.discord['TOKEN'] 
 A1111 = config.sd['A1111'] 
@@ -449,15 +449,17 @@ async def on_message(message):
 
 @client.hybrid_command(description="Set current channel as main channel for bot to auto reply in without needing to be called")
 async def main(ctx):
-    ctx.bot.behavior.main_channels.append(ctx.message.channel.id)
-    conn = sqlite3.connect('bot.db')
-    c = conn.cursor()
-    #c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channels', f'{ctx.message.channel.id}'))
-    c.execute('''INSERT OR REPLACE INTO main_channels (channel_id) VALUES (?)''', (ctx.message.channel.id,))
-    conn.commit()
-    conn.close()
-    await ctx.reply(f'Bot main channel set to {ctx.message.channel.mention}')
-    #await ctx.message.channel.send(f'Bot main channel set to {ctx.message.channel.mention}')
+    if ctx.message.channel.id not in ctx.bot.behavior.main_channels:
+        ctx.bot.behavior.main_channels.append(ctx.message.channel.id)
+        conn = sqlite3.connect('bot.db')
+        c = conn.cursor()
+        #c.execute('''INSERT OR REPLACE INTO config (setting, value) VALUES (?, ?)''', ('main_channels', f'{ctx.message.channel.id}'))
+        c.execute('''INSERT OR REPLACE INTO main_channels (channel_id) VALUES (?)''', (ctx.message.channel.id,))
+        conn.commit()
+        conn.close()
+        await ctx.reply(f'Bot main channel set to {ctx.message.channel.mention}')
+        #await ctx.message.channel.send(f'Bot main channel set to {ctx.message.channel.mention}')
+    await ctx.reply(f'{ctx.message.channel.mention} already set as main channel')
 
 @client.hybrid_command(description="Display help menu")
 async def helpmenu(ctx):
@@ -695,7 +697,8 @@ class Behavior():
         #c.execute('''CREATE TABLE IF NOT EXISTS usernotes (users, message, notes, keywords)''')
         c.execute('''SELECT channel_id FROM main_channels''')
         result = c.fetchall()
-        print(result)
+        result = [int(i[0]) for i in result]
+        logging.info(f"Main channels: {result}")
         if result is not []:
             self.main_channels = result
         else:
