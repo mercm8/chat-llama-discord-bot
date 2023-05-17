@@ -18,15 +18,17 @@ Note the additions to the Llayla character in the characters folder, showing how
 
 1. Setup text-generation-webui with their [one-click installer](https://github.com/oobabooga/text-generation-webui#one-click-installers) and download the model you want (for example `decapoda-research/llama-7b-hf`). Make sure it's working.
 
-2. Edit `bot.py` with your Discord bot's token
+2. Edit `config.py` with your Discord bot's token
 
-3. Place `bot.py` inside the text-generation-webui directory
+3. Place `bot.py` and `config.py` inside the text-generation-webui directory
 
-4. Open the `cmd` file that came with the one-click installer
+4. Place your character file(s) in the `characters` folder. One of them should have the same name as your bot.
 
-5. Install discord.py with `pip install discord`
+5. Open the `cmd` file that came with the one-click installer
 
-6. Run the bot with `python bot.py`
+6. Install discord.py with `pip install discord`
+
+7. Run the bot with `python bot.py`
 
 Note: For ease of use `bot.py` supports all `server.py` model-related command line arguments. For example, `python bot.py --model llama-7b-hf` is a valid way to start the bot.
 
