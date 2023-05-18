@@ -65,12 +65,12 @@ warnings.filterwarnings("ignore", category=UserWarning, message="TypedStorage is
 warnings.filterwarnings("ignore", category=UserWarning, message="You have modified the pretrained model configuration to control generation")
 
 import modules.extensions as extensions_module
+#extensions_module.load_extensions()
 from modules.chat import chatbot_wrapper, clear_chat_log, load_character 
 from modules import shared
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
-#extensions_module.load_extensions()
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -418,35 +418,35 @@ async def on_message(message):
     # Might want to move these triggers into the yaml file to let users localize/customize
     if (any(word in text.lower() for word in image_triggers) or \
         (random.random() < client.behavior.reply_with_image)) \
-        and a1111_online() and client.behavior.bot_should_reply(message):
+         and client.behavior.bot_should_reply(message):
+        if a1111_online():
 
-        """ Triggering the LLM here so it's aware of the picture it's sending to the user,
-        or else it gets 'confused' when the user responds to the image. """
+            """ Triggering the LLM here so it's aware of the picture it's sending to the user,
+            or else it gets 'confused' when the user responds to the image. """
 
-        if 'selfie' in text:
-            llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
-            Include your appearance, your current state of clothing, your surroundings 
-            and what you are doing right now.
-            """
-        else: 
-            llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}"."""
+            if 'selfie' in text:
+                llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
+                Include your appearance, your current state of clothing, your surroundings 
+                and what you are doing right now.
+                """
+            else: 
+                llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}"."""
 
-        llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
-        The description in your response will be sent to an image generation API."""
-        data = get_character_data(client.user.display_name)
-        override_llm_prompt = data.get("override_llm_prompt")
-        if override_llm_prompt == True: 
-            llm_prompt = text
+            llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
+            The description in your response will be sent to an image generation API."""
+            data = get_character_data(client.user.display_name)
+            override_llm_prompt = data.get("override_llm_prompt")
+            if override_llm_prompt == True: 
+                llm_prompt = text
 
-        async with message.channel.typing():
-            image_prompt = await create_image_prompt(llm_prompt)
-            await pic(ctx, prompt=image_prompt)
-            return
-    
-    if not a1111_online():
-        info_embed.title = f"A1111 api is not running at {A1111}"
-        info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
-        await ctx.reply(embed=info_embed)
+            async with message.channel.typing():
+                image_prompt = await create_image_prompt(llm_prompt)
+                await pic(ctx, prompt=image_prompt)
+                return
+        else:
+            info_embed.title = f"A1111 api is not running at {A1111}"
+            info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+            await ctx.reply(embed=info_embed)
     
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
@@ -807,6 +807,7 @@ def check_num_in_queue(message):
 
 async def a1111_txt2img(payload):
     response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
+    #await check_progress()
     r = response.json()
 
     for i in r['images']:
