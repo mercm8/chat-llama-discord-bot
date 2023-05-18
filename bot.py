@@ -70,6 +70,7 @@ from modules import shared
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
+extensions_module.load_extensions()
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
