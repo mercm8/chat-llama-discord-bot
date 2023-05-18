@@ -19,6 +19,8 @@ import yaml
 from PIL import Image, PngImagePlugin
 import requests
 import sqlite3
+import pprint
+import aiohttp
 
 ### Replace TOKEN with discord bot token, update A1111 address if necessary.
 import config
@@ -505,7 +507,9 @@ async def pic(ctx, prompt=None):
 
         # Looking for SD prompts in the character files
         data = get_character_data(client.user.display_name)
-        restore_faces = data.get("restore_faces")
+        filtered_data = {k: v for k, v in data.items() if k not in ['name','context','greeting','bot_description','bot_emoji','positive_prompt_prefix','positive_prompt_suffix','negative_prompt','presets']}
+        payload.update(filtered_data)
+
         positive_prompt_prefix = data.get("positive_prompt_prefix")
         positive_prompt_suffix = data.get("positive_prompt_suffix")
         negative_prompt = data.get("negative_prompt")
@@ -516,8 +520,7 @@ async def pic(ctx, prompt=None):
         if 'instagram' in payload["prompt"]: 
             payload["width"] = 512
             payload["height"] = 512
-        if restore_faces == False:
-            payload["restore_faces"] = False
+
         if positive_prompt_prefix: 
             payload["prompt"] = f'{positive_prompt_prefix} {image_prompt}'
         if positive_prompt_suffix:
@@ -537,11 +540,14 @@ async def pic(ctx, prompt=None):
         for lora in unique_loras:
             prompt = prompt.replace(lora,"", prompt.count(lora)-1)
         payload["prompt"] = prompt
-        task = asyncio.ensure_future(generate_image_with_a1111(payload))
+        
+        pprint.pp(payload)
+        task = asyncio.ensure_future(a1111_txt2img(payload))
         try:
-            await asyncio.wait_for(task, timeout=25)
+            await asyncio.wait_for(task, timeout=120)
         except asyncio.TimeoutError:
-            info_embed.title = "Image complete"
+            info_embed.title = "Timeout error"
+            await ctx.send("Timeout error")
             await picture_frame.edit(delete_after=15)
         else:
             file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
@@ -705,7 +711,7 @@ class Behavior():
         self.ignore_parenthesis = True
         self.reply_to_itself = 0
         self.chance_to_reply_to_other_bots = 0.3 #Reduce this if bot is too chatty with other bots
-        self.reply_to_bots_when_adressed = 0.5 #random.random()
+        self.reply_to_bots_when_adressed = 0.3 #random.random()
         self.go_wild_in_channel = True 
         self.user_conversations = {} # user ids and the last time they spoke.
         self.conversation_recency = 600
@@ -798,7 +804,7 @@ def check_num_in_queue(message):
     user_list_in_que = [list(i.keys())[0] for i in queues]
     return user_list_in_que.count(user)
 
-async def generate_image_with_a1111(payload):
+async def a1111_txt2img(payload):
     response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
     r = response.json()
 
@@ -813,8 +819,9 @@ async def generate_image_with_a1111(payload):
         image.save(f'{client.user.display_name}.png', pnginfo=pnginfo)
     return image
 
-async def get_progress():
-    url = "http://127.0.0.1:7860/sdapi/v1/progress"
+async def check_progress():
+    url = f'{A1111}/sdapi/v1/progress'
+    loop = asyncio.get_running_loop()
     response = await loop.run_in_executor(None, requests.get, url)
     if response.status_code == 200:
         data = response.json()

@@ -13,8 +13,15 @@ bot_emoji: 🟣
 # prefix, suffix and negative lines are added to the beginning and end of all prompts sent to SD in order to guarantee a style.
 override_llm_prompt: False # If True, sends your message directly to the bot without adding prompting instructions.
 restore_faces: True
+sampler_name: "DPM++ 2M Karras"
+steps: 20
+cfg_scale: 5
+enable_hr: True
+denoising_strength: 0.55
+hr_scale: 2
+hr_second_pass_steps: 20 
 positive_prompt_prefix: 
-positive_prompt_suffix: 24mm, 4k textures, soft cinematic light, adobe lightroom, photolab, hdr, intricate, elegant, highly detailed, sharp focus, ((((cinematic look)))), soothing tones, insane details, intricate details, hyperdetailed, low contrast, soft cinematic light, dim colors, exposure blend, hdr, faded
+positive_prompt_suffix: 24mm, 4k textures, soft cinematic light, adobe lightroom, photolab, hdr, intricate, elegant, highly detailed, sharp focus, (cinematic look:1.2), soothing tones, insane details, intricate details, hyperdetailed, low contrast, soft cinematic light, dim colors, exposure blend, hdr, faded
 negative_prompt: ng_deepnegative_v1_75t
 presets:
   # Add trigger words that result in extra SD prompt values being tagged on to the prompt
