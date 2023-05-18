@@ -107,7 +107,8 @@ def update_model_parameters(state, initial=False):
     shared.need_restart = True
 #Load Extensions    
 extensions_module.available_extensions = utils.get_available_extensions()
-extensions_module.load_extensions()
+if shared.args.extensions is not None and len(shared.args.extensions) > 0:
+    extensions_module.load_extensions()
 
 
 #Discord Bot
