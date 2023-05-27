@@ -1,4 +1,4 @@
-note: last working ooba commit: `a5d5bb9`
+note: last working ooba commit: `2cf711f`
 
 # ChatLLaMA Discord Bot
 
@@ -36,7 +36,8 @@ Note the additions to the Llayla character in the characters folder, showing how
 
 7. Run the bot with `python bot.py`
 
-Note: For ease of use `bot.py` supports all `server.py` model-related command line arguments. For example, `python bot.py --model llama-7b-hf` is a valid way to start the bot.
-If you experience problems, it might be because the webui updated. Try `git checkout a5d5bb9` before running the bot with `python bot.py`
+# Notes: 
+- For ease of use `bot.py` supports all `server.py` model-related command line arguments. For example, `python bot.py --model llama-7b-hf` is a valid way to start the bot.
+- If you experience problems, it might be because the webui updated. Try `git checkout a5d5bb9` before running the bot with `python bot.py`
 
 
