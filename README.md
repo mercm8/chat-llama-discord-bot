@@ -1,4 +1,4 @@
-note: last working ooba commit: `a5d5bb9`
+note: last working ooba commit: `2cf711f`
 
 # ChatLLaMA Discord Bot
 
