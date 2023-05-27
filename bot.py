@@ -21,6 +21,8 @@ import requests
 import sqlite3
 import pprint
 import aiohttp
+import math
+import time
 
 ### Replace TOKEN with discord bot token, update A1111 address if necessary.
 import config
@@ -70,6 +72,8 @@ from modules.chat import chatbot_wrapper, clear_chat_log, load_character
 from modules import shared
 from modules import chat, utils
 shared.args.chat = True
+from threading import Lock
+shared.generation_lock = Lock()
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
 
@@ -110,8 +114,8 @@ extensions_module.available_extensions = utils.get_available_extensions()
 if shared.args.extensions is not None and len(shared.args.extensions) > 0:
     extensions_module.load_extensions()
 
-
 #Discord Bot
+
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
 llamas_name = "Assistant"
@@ -318,16 +322,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = commands.Bot(command_prefix=".", intents=intents)
 
-
-
 queues = []
 blocking = False
 reply_count = 0
-
-def ceil_timedelta(td):
-    return td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60)
-    #return td + (datetime.min - td) % timedelta(minutes=1)
-    #return str(td + timedelta(minutes=1) - timedelta(seconds=td.seconds % 60))
 
 async def change_profile(ctx, character):
     """ Changes username and avatar of bot. """
@@ -336,8 +333,8 @@ async def change_profile(ctx, character):
     if hasattr(ctx.bot, "last_change"):
         if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
             remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
-            td = datetime.timedelta(remaining_cooldown)
-            await ctx.channel.send(f'Please wait {ceil_timedelta(td)} before changing character again')
+            seconds = int(remaining_cooldown.total_seconds())
+            await ctx.channel.send(f'Please wait {seconds} before changing character again')
     else:
         try:
             if (ctx.bot.behavior.change_username_with_character and ctx.bot.user.display_name != character):
@@ -388,7 +385,10 @@ async def send_long_message(channel, message_text):
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
     #pprint.pp(user_input)
+    #test = chatbot_wrapper(**user_input)
+    
     for resp in chatbot_wrapper(**user_input):
+        #pprint.pp(resp)
         i_resp = resp['internal']
         if len(i_resp)>0:
             resp_clean = i_resp[len(i_resp)-1][1]
@@ -409,16 +409,12 @@ async def llm_gen(message, queues):
         user_input = queues.pop(0)
         mention = list(user_input.keys())[0]
         user_input = user_input[mention]
-        last_resp = chatbot_wrapper_wrapper(user_input)
-        # for resp in chatbot_wrapper(**user_input):
-        #     i_resp = resp['internal']
-        #     if len(i_resp)>0:
-        #         resp_clean = i_resp[len(i_resp)-1][1]
-        #         last_resp = resp_clean
+        user_input["state"]["custom_stopping_strings"] += f', "{message.author.display_name}: ","{client.user.display_name}: "'
 
+        last_resp = chatbot_wrapper_wrapper(user_input)
         logging.info("reply sent: \"" + mention + ": {'text': '" + user_input["text"] + "', 'response': '" + last_resp + "'}\"")
+
         await send_long_message(message.channel, last_resp)
-        
         if bot_args.limit_history is not None and len(shared.history['visible']) > bot_args.limit_history:
             shared.history['visible'].pop(0)
             shared.history['internal'].pop(0)
@@ -432,8 +428,13 @@ async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
         client.llm_context = load_character(client.user.display_name, '', '')[4]
+
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()
+    client.behavior.__dict__.update(config.behavior)
+    data = get_character_data(client.user.display_name)
+    client.behavior.__dict__.update(data["behavior"])
+
     logging.info("bot ready")
     await client.tree.sync()
 
@@ -454,17 +455,34 @@ async def create_image_prompt(llm_prompt):
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
     last_resp = chatbot_wrapper_wrapper(user_input)
-    # for resp in chatbot_wrapper(**user_input):
-    #     resp_clean = resp[len(resp)-1][1]
-    #     last_resp = resp_clean
     return last_resp
 
+def determine_date(current_time):
+    """ receives time setting from character sheet and returns date as human readable format """
+    if current_time == 'now':
+        current_time = datetime.now()
+    elif isinstance(current_time, int):
+        current_time = datetime.now() + timedelta(days=current_time)
+    elif isinstance(current_time, float):
+        days = math.floor(current_time)
+        hours = (current_time - days) * 24
+        current_time = datetime.now() + timedelta(days=days, hours=hours)
+    else:
+        return None
+    if current_time.hour < 12:
+        time_string = 'in the morning'
+    elif current_time.hour < 17:
+        time_string = 'in the afternoon'
+    else:
+        time_string = 'in the evening'
+    current_time = current_time.strftime('%B %d{}, %Y, %I {}').format('th' if 11<=current_time.day<=13 else {1:'st',2:'nd',3:'rd'}.get(current_time.day%10, 'th'), time_string)        
+    return current_time
 
 @client.event
 async def on_message(message):
     text = message.clean_content
     ctx = await client.get_context(message)
-
+    data = get_character_data(client.user.display_name)
     if client.behavior.main_channels == None and client.user.mentioned_in(message):
         """ User has not set a main channel for the bot, but is speaking to it. 
         Likely first time use. Setting current channel as main channel for bot which will
@@ -475,7 +493,14 @@ async def on_message(message):
     if (any(word in text.lower() for word in image_triggers) or \
         (random.random() < client.behavior.reply_with_image)) \
          and client.behavior.bot_should_reply(message):
-        if a1111_online():
+        if not a1111_online():
+            info_embed.title = f"A1111 api is not running at {A1111}"
+            info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+            await ctx.reply(embed=info_embed)
+        else:
+            info_embed.title = "Prompting ..."
+            info_embed.description = " "
+            picture_frame = await ctx.reply(embed=info_embed)            
             """ Triggering the LLM here so it's aware of the picture it's sending to the user,
             or else it gets 'confused' when the user responds to the image. """
 
@@ -489,8 +514,13 @@ async def on_message(message):
 
             llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
             The description in your response will be sent to an image generation API."""
-            data = get_character_data(client.user.display_name)
-            override_llm_prompt = data.get("override_llm_prompt")
+            if f"@{client.user.display_name}" in text:
+                text = text.replace(f"@{client.user.display_name}","")
+
+            if not hasattr(data,"override_llm_prompt"):
+                override_llm_prompt = False
+            elif data["override_llm_prompt"] == True:
+                override_llm_prompt = True
             if override_llm_prompt == True: 
                 llm_prompt = text
 
@@ -499,12 +529,8 @@ async def on_message(message):
                 force_selfies = data.get("force_selfies")
                 if 'selfie' in text and force_selfies:
                     image_prompt = 'Selfie: ' + image_prompt
-                await pic(ctx, prompt=image_prompt)
+                await pic(ctx, picture_frame, prompt=image_prompt)
                 return
-        else:
-            info_embed.title = f"A1111 api is not running at {A1111}"
-            info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
-            await ctx.reply(embed=info_embed)
     
     if client.behavior.bot_should_reply(message):
         pass # Bot replies.
@@ -516,11 +542,15 @@ async def on_message(message):
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
+    if client.behavior.current_time:
+        current_time = determine_date(client.behavior.current_time)
+        user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
     num = check_num_in_queue(message)
     if num >=10:
         await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
     else:
         queue(message, user_input)
+        
         async with message.channel.typing():
             await llm_gen(message, queues)
 
@@ -549,12 +579,9 @@ async def regen(ctx):
     info_embed.description = ""
     await ctx.reply(embed=info_embed)
     user_input = LLMUserInputs().settings
+    #user_input["state"]["custom_stopping_strings"].append(message.author.display_name,client.user.display_name)
     user_input["regenerate"] = True
     last_resp = chatbot_wrapper_wrapper(user_input)
-    # for resp in chatbot_wrapper(**user_input):
-    #     resp_clean = resp[len(resp)-1][1]
-    #     last_resp = resp_clean
-
     await ctx.send(last_resp)
 
 @client.hybrid_command(description="Continue the generation")
@@ -567,15 +594,11 @@ async def cont(ctx):
     user_input["state"]["min_length"] = 500
     user_input["state"]["max_new_tokens"] = 1000
     last_resp = chatbot_wrapper_wrapper(user_input)
-    # for resp in chatbot_wrapper(**user_input):
-    #     resp_clean = resp[len(resp)-1][1]
-    #     last_resp = resp_clean
     await ctx.send(last_resp)
-
 
 @client.hybrid_command(description="Take a picture!")
 @app_commands.describe(prompt="The initial prompt to contextualize LLaMA")
-async def pic(ctx, prompt=None):
+async def pic(ctx, picture_frame, prompt=None):
     if not a1111_online():
         info_embed.title = f"A1111 api is not running at {A1111}"
         info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
@@ -583,7 +606,7 @@ async def pic(ctx, prompt=None):
     else:
         info_embed.title = "Processing ..."
         info_embed.description = " "
-        picture_frame = await ctx.reply(embed=info_embed)
+        await picture_frame.edit(embed=info_embed)
         if not prompt:
             llm_prompt = """Describe the scene as if it were a picture to a blind person,
             also describe yourself and refer to yourself in the third person if the picture is of you.
@@ -599,7 +622,8 @@ async def pic(ctx, prompt=None):
         payload.update(config.sd['payload'])
         # Looking for SD prompts and payload in the character files:
         data = get_character_data(client.user.display_name)
-        filtered_data = {k: v for k, v in data.items() if k not in ['name','context','greeting','bot_description','bot_emoji','positive_prompt_prefix','positive_prompt_suffix','negative_prompt','presets']}
+        filtered_data = {k: v for k, v in data.items() \
+                         if k not in ['name','context','greeting','bot_description','bot_emoji','positive_prompt_prefix','positive_prompt_suffix','negative_prompt','presets']}
         payload.update(filtered_data)
         positive_prompt_prefix = data.get("positive_prompt_prefix")
         positive_prompt_suffix = data.get("positive_prompt_suffix")
@@ -619,7 +643,7 @@ async def pic(ctx, prompt=None):
         if negative_prompt: payload["negative_prompt"] = negative_prompt
         if presets:
             for preset in presets:
-                if preset['trigger'].lower() in payload["prompt"].lower():
+                if preset['trigger'].lower() in payload["prompt"].lower() or preset['trigger'].lower() in ctx.message.clean_content.lower():
                     payload["prompt"] += " " + preset['positive_prompt']
                     payload["negative_prompt"] += " " + preset['negative_prompt']
 
@@ -632,7 +656,7 @@ async def pic(ctx, prompt=None):
             prompt = prompt.replace(lora,"", prompt.count(lora)-1)
         payload["prompt"] = prompt
         
-        pprint.pp(payload)
+        #pprint.pp(payload)
         task = asyncio.ensure_future(a1111_txt2img(payload))
         try:
             await asyncio.wait_for(task, timeout=120)
@@ -641,20 +665,78 @@ async def pic(ctx, prompt=None):
             await ctx.send("Timeout error")
             await picture_frame.edit(delete_after=15)
         else:
-            file = discord.File(os.path.join(os.path.dirname(__file__), f'{client.user.display_name}.png'))
+            file = discord.File(os.path.join(os.path.dirname(__file__), 'img.png'))
             info_embed.title = "Image complete"
             if image_prompt.startswith('Selfie: '):
                 image_prompt = image_prompt.replace('Selfie: ','')
             await picture_frame.edit(delete_after=1)
             await ctx.send(file=file)
+            os.rename('img.png', f'{int(time.time())}.png' )
             await ctx.send(image_prompt)
 
+# @client.hybrid_command(aliases=["set"], description="Set LLM values")
+# @app_commands.describe(
+#     reply_with_image="Chance for the bot to respond with an image instead of just text",
+#     reply_to_itself="Chance for the bot to reply to itself",
+#     chance_to_reply_to_other_bots="Reduce this if bot is too chatty with other bots",
+#     reply_to_bots_when_adressed="Reduce this if bot is too chatty with other bots",
+#     temperature="How 'creative' the bot should be with its responses",
+#     max_new_tokens="Maximum amount of tokens to be generated for responses",
+#     min_length="Minimum length for responses",
+#     top_p=0.1,
+#     top_k=40,
+#     typical_p=1,
+#     repetition_penalty=1.18)
+# async def behavior(ctx, prompt_new):
+
+    """
+    self.reply_with_image = 0 # Chance for the bot to respond with an image instead of just text
+    self.change_username_with_character = True
+    self.change_avatar_with_character = True
+    self.only_speak_when_spoken_to = True
+    self.ignore_parenthesis = True
+    self.reply_to_itself = 0
+    self.chance_to_reply_to_other_bots = 0.5 #Reduce this if bot is too chatty with other bots
+    self.reply_to_bots_when_adressed = 0.3 #Reduce this if bot is too chatty with other bots
+    self.go_wild_in_channel = True
+    self.user_conversations = {} # user ids and the last time they spoke.
+    self.conversation_recency = 600
+    "max_new_tokens": 400,
+    "seed": -1.0,
+    "temperature": 0.7,
+    "top_p": 0.1,
+    "top_k": 40,
+    "typical_p": 1,
+    "repetition_penalty": 1.18,
+    "encoder_repetition_penalty": 1,
+    "no_repeat_ngram_size": 0,
+    "min_length": 50,
+    "do_sample": True,
+    "penalty_alpha": 0,
+    "num_beams": 1,
+    "length_penalty": 1,
+    "early_stopping": False,
+    "add_bos_token": True,
+    "ban_eos_token": False, 
+    "skip_special_tokens": True,
+    "truncation_length": 2048,
+    "custom_stopping_strings": f'"### Assistant","### Human","</END>","{client.user.display_name}"',
+    "name1": "",
+    "name2": client.user.display_name,
+    "name1_instruct": "",
+    "name2_instruct": client.user.display_name,
+    "greeting": "",
+    "context": client.llm_context,
+    "end_of_turn": "",
+    "chat_prompt_size": 2048,
+    "chat_generation_attempts": 1,
+    "stop_at_newline": False,
+    "mode": "cai-chat",
+    "stream": True
+    """
+
 @client.hybrid_command(description="Reset the conversation with LLaMA")
-@app_commands.describe(
-    prompt_new="The initial prompt to contextualize LLaMA",
-    your_name_new="The name which all users speak as",
-    llamas_name_new="The name which LLaMA speaks as")
-async def reset(ctx, prompt_new=prompt, your_name_new=your_name, llamas_name_new=llamas_name):
+async def reset(ctx):
     global reply_count
     your_name = ctx.message.author.display_name
     llamas_name = ctx.bot.user.display_name
@@ -667,8 +749,6 @@ async def reset(ctx, prompt_new=prompt, your_name_new=your_name, llamas_name_new
     info_embed.description = ""
     await ctx.reply(embed=info_embed)    
     logging.info("conversation reset: {'replies': " + str(reply_count) + ", 'your_name': '" + your_name + "', 'llamas_name': '" + llamas_name + "', 'prompt': '" + prompt + "'}")
-    #reset_embed.timestamp = datetime.now() - timedelta(hours=3)
-    #reset_embed.description = "Replies: " + str(reply_count) + "\nYour name: " + your_name + "\nLLaMA's name: " + llamas_name + "\nPrompt: " + prompt
 
 @client.hybrid_command(description="Check the status of your reply queue position and wait time")
 async def status(ctx):
@@ -679,10 +759,8 @@ async def status(ctx):
         msg = f"{ctx.message.author.mention} Your job is currently {user_position} out of {total_num_queued_jobs} in the queue. Estimated time until response is ready: {user_position * 20/60} minutes."
     else:
         msg = f"{ctx.message.author.mention} doesn\'t have a job queued."
-
     status_embed.timestamp = datetime.now() - timedelta(hours=3)
     status_embed.description = msg
-    
     await ctx.send(embed=status_embed)
 
 def get_character_data(character):
@@ -740,7 +818,7 @@ async def character(ctx):
         if datetime.now() >= ctx.bot.last_change + timedelta(minutes=10):
             remaining_cooldown = ctx.bot.last_change + timedelta(minutes=10) - datetime.now() 
             remaining_cooldown = total_seconds = remaining_cooldown.total_seconds()
-            await ctx.channel.send(f'`Please wait {ceil_timedelta(remaining_cooldown)} before changing character again`')
+            await ctx.channel.send(f'`Please wait {total_seconds} before changing character again`')
     else:
         await ctx.send('Choose Character:', view=view)
 
@@ -753,7 +831,6 @@ class LLMUserInputs():
     def __init__(self):
         self.settings = {
         "text": "",
-        #"history": {'internal': [], 'visible': []},
         "history": shared.history,
         "state": {
             "max_new_tokens": 400,
@@ -762,6 +839,8 @@ class LLMUserInputs():
             "top_p": 0.1,
             "top_k": 40,
             "typical_p": 1,
+            'epsilon_cutoff': 0,
+            'eta_cutoff': 0,
             "repetition_penalty": 1.18,
             "encoder_repetition_penalty": 1,
             "no_repeat_ngram_size": 0,
@@ -775,7 +854,7 @@ class LLMUserInputs():
             "ban_eos_token": False, 
             "skip_special_tokens": True,
             "truncation_length": 2048,
-            "custom_stopping_strings": '"### Assistant","### Human","</END>"',
+            "custom_stopping_strings": f'"### Assistant","### Human","</END>","{client.user.display_name}"',
             "name1": "",
             "name2": client.user.display_name,
             "name1_instruct": "",
@@ -793,6 +872,7 @@ class LLMUserInputs():
         "_continue": False, 
         "loading_message" : True
         } 
+        
         # Override defaults with user configs
         state = config.llm['state']
         self.settings['state'].update(state)  
@@ -923,7 +1003,7 @@ async def a1111_txt2img(payload):
         response2 = requests.post(url=f'{A1111}/sdapi/v1/png-info', json=png_payload)
         pnginfo = PngImagePlugin.PngInfo()
         pnginfo.add_text("parameters", response2.json().get("info"))
-        image.save(f'{client.user.display_name}.png', pnginfo=pnginfo)
+        image.save('img.png', pnginfo=pnginfo)
     return image
 
 async def check_progress():
@@ -938,4 +1018,5 @@ async def check_progress():
 
 if not hasattr(client, 'behavior'):
     client.behavior = Behavior()
+    
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
