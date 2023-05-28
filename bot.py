@@ -105,9 +105,23 @@ def update_model_parameters(state, initial=False):
         elif element == 'cpu_memory' and value is not None:
             value = f"{value}MiB"
 
+        if element in ['pre_layer']:
+            value = [value] if value > 0 else None
+
         setattr(shared.args, element, value)
 
-    shared.need_restart = True
+    found_positive = False
+    for i in gpu_memories:
+        if i > 0:
+            found_positive = True
+            break
+
+    if not (initial and vars(shared.args)['gpu_memory'] != vars(shared.args_defaults)['gpu_memory']):
+        if found_positive:
+            shared.args.gpu_memory = [f"{i}MiB" for i in gpu_memories]
+        else:
+            shared.args.gpu_memory = None
+            
 #Load Extensions    
 extensions_module.available_extensions = utils.get_available_extensions()
 if shared.args.extensions is not None and len(shared.args.extensions) > 0:
