@@ -74,7 +74,8 @@ from modules import chat, utils
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
-
+from threading import Lock
+shared.generation_lock = Lock()
 
 # Update the command-line arguments based on the interface values
 def update_model_parameters(state, initial=False):
@@ -121,17 +122,13 @@ def update_model_parameters(state, initial=False):
             shared.args.gpu_memory = [f"{i}MiB" for i in gpu_memories]
         else:
             shared.args.gpu_memory = None
-            
+
 #Load Extensions    
 extensions_module.available_extensions = utils.get_available_extensions()
 if shared.args.extensions is not None and len(shared.args.extensions) > 0:
     extensions_module.load_extensions()
 
 #Discord Bot
-
-from threading import Lock
-shared.generation_lock = Lock()
-
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -401,7 +398,7 @@ async def send_long_message(channel, message_text):
         await send_long_message(channel, message_text[closing_codeblock_index+3:])
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
-    #pprint.pp(user_input)
+    pprint.pp(user_input)
     for resp in chatbot_wrapper(**user_input):
         i_resp = resp['internal']
         if len(i_resp)>0:
@@ -444,8 +441,8 @@ async def on_ready():
             client.llm_context = load_character(client.user.display_name, '', '')[4]
         except:
             client.llm_context = "no character loaded"
-    if not hasattr(client, 'behavior'):
-        client.behavior = Behavior()
+    #if not hasattr(client, 'behavior'):
+    client.behavior = Behavior()
     client.behavior.__dict__.update(config.behavior)
     data = get_character_data(client.user.display_name)
     client.behavior.__dict__.update(data["behavior"])
@@ -476,7 +473,7 @@ def determine_date(current_time):
     """ receives time setting from character sheet and returns date as human readable format """
     if current_time == 0:
         current_time = datetime.now()
-    if isinstance(current_time, int):
+    elif isinstance(current_time, int):
         current_time = datetime.now() + timedelta(days=current_time)
     elif isinstance(current_time, float):
         days = math.floor(current_time)
@@ -557,15 +554,17 @@ async def on_message(message):
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
-    if client.behavior.time_offset:
+    if hasattr(client.behavior,'time_offset'):
         current_time = determine_date(client.behavior.time_offset)
-        user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
+    else:
+        current_time = determine_date(0)
+    user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
     num = check_num_in_queue(message)
     if num >=10:
         await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
     else:
         queue(message, user_input)
-        pprint.pp(user_input)
+        #pprint.pp(user_input)
         async with message.channel.typing():
             await llm_gen(message, queues)
 
@@ -1029,7 +1028,8 @@ async def check_progress():
     else:
         print("Error:", response.status_code)
 
-if not hasattr(client, 'behavior'):
-    client.behavior = Behavior()
-    
+# if not hasattr(client, 'behavior'):
+#     client.behavior = Behavior()
+
+
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
