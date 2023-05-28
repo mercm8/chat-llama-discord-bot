@@ -71,13 +71,10 @@ import modules.extensions as extensions_module
 from modules.chat import chatbot_wrapper, clear_chat_log, load_character 
 from modules import shared
 shared.args.chat = True
-from threading import Lock
-shared.generation_lock = Lock()
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
 from threading import Lock
 shared.generation_lock = Lock()
-
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -348,10 +345,7 @@ async def send_long_message(channel, message_text):
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
     #pprint.pp(user_input)
-    #test = chatbot_wrapper(**user_input)
-    
     for resp in chatbot_wrapper(**user_input):
-        #pprint.pp(resp)
         i_resp = resp['internal']
         if len(i_resp)>0:
             resp_clean = i_resp[len(i_resp)-1][1]
@@ -373,14 +367,10 @@ async def llm_gen(message, queues):
         mention = list(user_input.keys())[0]
         user_input = user_input[mention]
         user_input["state"]["custom_stopping_strings"] += f', "{message.author.display_name}: ","{client.user.display_name}: "'
-<<<<<<< HEAD
-=======
-
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
         last_resp = chatbot_wrapper_wrapper(user_input)
         logging.info("reply sent: \"" + mention + ": {'text': '" + user_input["text"] + "', 'response': '" + last_resp + "'}\"")
-
         await send_long_message(message.channel, last_resp)
+        
         if bot_args.limit_history is not None and len(shared.history['visible']) > bot_args.limit_history:
             shared.history['visible'].pop(0)
             shared.history['internal'].pop(0)
@@ -393,15 +383,10 @@ async def llm_gen(message, queues):
 async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
-<<<<<<< HEAD
         try:
             client.llm_context = load_character(client.user.display_name, '', '')[4]
         except:
             client.llm_context = "no character loaded"
-=======
-        client.llm_context = load_character(client.user.display_name, '', '')[4]
-
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()
     client.behavior.__dict__.update(config.behavior)
@@ -432,13 +417,9 @@ async def create_image_prompt(llm_prompt):
 
 def determine_date(current_time):
     """ receives time setting from character sheet and returns date as human readable format """
-<<<<<<< HEAD
-    if isinstance(current_time, int):
-=======
-    if current_time == 'now':
+    if current_time == 0:
         current_time = datetime.now()
-    elif isinstance(current_time, int):
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
+    if isinstance(current_time, int):
         current_time = datetime.now() + timedelta(days=current_time)
     elif isinstance(current_time, float):
         days = math.floor(current_time)
@@ -519,24 +500,15 @@ async def on_message(message):
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
-<<<<<<< HEAD
     if client.behavior.time_offset:
         current_time = determine_date(client.behavior.time_offset)
-=======
-    if client.behavior.current_time:
-        current_time = determine_date(client.behavior.current_time)
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
         user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
     num = check_num_in_queue(message)
     if num >=10:
         await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
     else:
         queue(message, user_input)
-<<<<<<< HEAD
         pprint.pp(user_input)
-=======
-        
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
         async with message.channel.typing():
             await llm_gen(message, queues)
 
@@ -563,7 +535,6 @@ async def regen(ctx):
     info_embed.description = ""
     await ctx.reply(embed=info_embed)
     user_input = LLMUserInputs().settings
-    #user_input["state"]["custom_stopping_strings"].append(message.author.display_name,client.user.display_name)
     user_input["regenerate"] = True
     last_resp = chatbot_wrapper_wrapper(user_input)
     await ctx.send(last_resp)
@@ -815,6 +786,7 @@ class LLMUserInputs():
     def __init__(self):
         self.settings = {
         "text": "",
+        #"history": {'internal': [], 'visible': []},
         "history": shared.history,
         "state": {
             "max_new_tokens": 400,
@@ -823,13 +795,8 @@ class LLMUserInputs():
             "top_p": 0.1,
             "top_k": 40,
             "typical_p": 1,
-<<<<<<< HEAD
             "epsilon_cutoff": 0,
             "eta_cutoff": 0,
-=======
-            'epsilon_cutoff': 0,
-            'eta_cutoff': 0,
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
             "repetition_penalty": 1.18,
             "encoder_repetition_penalty": 1,
             "no_repeat_ngram_size": 0,
@@ -1009,8 +976,4 @@ if not hasattr(client, 'behavior'):
     client.behavior = Behavior()
 
 
-<<<<<<< HEAD
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
-=======
-client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
->>>>>>> d1746da59d7e7afc65580e3824f01fbda5955024
