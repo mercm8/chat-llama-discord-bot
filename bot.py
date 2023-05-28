@@ -67,14 +67,68 @@ warnings.filterwarnings("ignore", category=UserWarning, message="TypedStorage is
 warnings.filterwarnings("ignore", category=UserWarning, message="You have modified the pretrained model configuration to control generation")
 
 import modules.extensions as extensions_module
-#extensions_module.load_extensions()
+from modules.extensions import apply_extensions
 from modules.chat import chatbot_wrapper, clear_chat_log, load_character 
 from modules import shared
+from modules import chat, utils
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
 from threading import Lock
 shared.generation_lock = Lock()
+
+# Update the command-line arguments based on the interface values
+def update_model_parameters(state, initial=False):
+    elements = ui.list_model_elements()  # the names of the parameters
+    gpu_memories = []
+
+    for i, element in enumerate(elements):
+        if element not in state:
+            continue
+
+        value = state[element]
+        if element.startswith('gpu_memory'):
+            gpu_memories.append(value)
+            continue
+
+        if initial and vars(shared.args)[element] != vars(shared.args_defaults)[element]:
+            continue
+
+        # Setting null defaults
+        if element in ['wbits', 'groupsize', 'model_type'] and value == 'None':
+            value = vars(shared.args_defaults)[element]
+        elif element in ['cpu_memory'] and value == 0:
+            value = vars(shared.args_defaults)[element]
+
+        # Making some simple conversions
+        if element in ['wbits', 'groupsize', 'pre_layer']:
+            value = int(value)
+        elif element == 'cpu_memory' and value is not None:
+            value = f"{value}MiB"
+
+        if element in ['pre_layer']:
+            value = [value] if value > 0 else None
+
+        setattr(shared.args, element, value)
+
+    found_positive = False
+    for i in gpu_memories:
+        if i > 0:
+            found_positive = True
+            break
+
+    if not (initial and vars(shared.args)['gpu_memory'] != vars(shared.args_defaults)['gpu_memory']):
+        if found_positive:
+            shared.args.gpu_memory = [f"{i}MiB" for i in gpu_memories]
+        else:
+            shared.args.gpu_memory = None
+
+#Load Extensions    
+extensions_module.available_extensions = utils.get_available_extensions()
+if shared.args.extensions is not None and len(shared.args.extensions) > 0:
+    extensions_module.load_extensions()
+
+#Discord Bot
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -344,7 +398,7 @@ async def send_long_message(channel, message_text):
         await send_long_message(channel, message_text[closing_codeblock_index+3:])
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
-    #pprint.pp(user_input)
+    pprint.pp(user_input)
     for resp in chatbot_wrapper(**user_input):
         i_resp = resp['internal']
         if len(i_resp)>0:
@@ -387,8 +441,8 @@ async def on_ready():
             client.llm_context = load_character(client.user.display_name, '', '')[4]
         except:
             client.llm_context = "no character loaded"
-    if not hasattr(client, 'behavior'):
-        client.behavior = Behavior()
+    #if not hasattr(client, 'behavior'):
+    client.behavior = Behavior()
     client.behavior.__dict__.update(config.behavior)
     data = get_character_data(client.user.display_name)
     client.behavior.__dict__.update(data["behavior"])
@@ -419,7 +473,7 @@ def determine_date(current_time):
     """ receives time setting from character sheet and returns date as human readable format """
     if current_time == 0:
         current_time = datetime.now()
-    if isinstance(current_time, int):
+    elif isinstance(current_time, int):
         current_time = datetime.now() + timedelta(days=current_time)
     elif isinstance(current_time, float):
         days = math.floor(current_time)
@@ -500,15 +554,17 @@ async def on_message(message):
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
-    if client.behavior.time_offset:
+    if hasattr(client.behavior,'time_offset'):
         current_time = determine_date(client.behavior.time_offset)
-        user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
+    else:
+        current_time = determine_date(0)
+    user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
     num = check_num_in_queue(message)
     if num >=10:
         await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
     else:
         queue(message, user_input)
-        pprint.pp(user_input)
+        #pprint.pp(user_input)
         async with message.channel.typing():
             await llm_gen(message, queues)
 
@@ -972,8 +1028,8 @@ async def check_progress():
     else:
         print("Error:", response.status_code)
 
-if not hasattr(client, 'behavior'):
-    client.behavior = Behavior()
+# if not hasattr(client, 'behavior'):
+#     client.behavior = Behavior()
 
 
 client.run(bot_args.token if bot_args.token else TOKEN, root_logger=True, log_handler=handler)
