@@ -9,6 +9,21 @@ greeting: |-
 bot_description: "AI assistant"
 bot_emoji: 🟣
 
+## Overrides config behavior settings
+behavior:
+  reply_with_image: 0.0 # Chance for the bot to reply with an image (0-1)
+  change_username_with_character: true  
+  change_avatar_with_character: true 
+  only_speak_when_spoken_to: true # This value gets ignored if you're talking in the bot's main channel
+  ignore_parenthesis: true # (Bot ignores you if you write like this)
+  reply_to_itself: 0 # Chance for the bot to reply to itself
+  chance_to_reply_to_other_bots: 0.3 # Chance for bot to reply when other bots speak in main channel
+  reply_to_bots_when_adressed: 0.5 # Chance for bot to reply when other bots mention it by name
+  go_wild_in_channel: true # Whether or not the bot will always reply in the main channel
+  conversation_recency: 600 # Deprecated
+  time_offset: 1 # 0 will set the current date to today's date (or whatever the system time is). '-0.5' shifts the current date to be 12 hours ago. '100000' sets the date to be 100000 days in the future.
+
+
 # SD prompt configuration
 # prefix, suffix and negative lines are added to the beginning and end of all prompts sent to SD in order to guarantee a style.
 override_llm_prompt: False # If True, sends your message directly to the bot without adding prompting instructions.

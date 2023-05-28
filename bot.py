@@ -72,10 +72,9 @@ from modules.chat import chatbot_wrapper, clear_chat_log, load_character
 from modules import shared
 from modules import chat, utils
 shared.args.chat = True
-from threading import Lock
-shared.generation_lock = Lock()
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
+
 
 # Update the command-line arguments based on the interface values
 def update_model_parameters(state, initial=False):
@@ -115,6 +114,10 @@ if shared.args.extensions is not None and len(shared.args.extensions) > 0:
     extensions_module.load_extensions()
 
 #Discord Bot
+
+from threading import Lock
+shared.generation_lock = Lock()
+
 
 prompt = "This is a conversation with your Assistant. The Assistant is very helpful and is eager to chat with you and answer your questions."
 your_name = "You"
@@ -385,10 +388,7 @@ async def send_long_message(channel, message_text):
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
     #pprint.pp(user_input)
-    #test = chatbot_wrapper(**user_input)
-    
     for resp in chatbot_wrapper(**user_input):
-        #pprint.pp(resp)
         i_resp = resp['internal']
         if len(i_resp)>0:
             resp_clean = i_resp[len(i_resp)-1][1]
@@ -410,11 +410,10 @@ async def llm_gen(message, queues):
         mention = list(user_input.keys())[0]
         user_input = user_input[mention]
         user_input["state"]["custom_stopping_strings"] += f', "{message.author.display_name}: ","{client.user.display_name}: "'
-
         last_resp = chatbot_wrapper_wrapper(user_input)
         logging.info("reply sent: \"" + mention + ": {'text': '" + user_input["text"] + "', 'response': '" + last_resp + "'}\"")
-
         await send_long_message(message.channel, last_resp)
+        
         if bot_args.limit_history is not None and len(shared.history['visible']) > bot_args.limit_history:
             shared.history['visible'].pop(0)
             shared.history['internal'].pop(0)
@@ -427,8 +426,10 @@ async def llm_gen(message, queues):
 async def on_ready():
     if not hasattr(client, 'llm_context'):
         """ Loads character profile based on Bot's display name """
-        client.llm_context = load_character(client.user.display_name, '', '')[4]
-
+        try:
+            client.llm_context = load_character(client.user.display_name, '', '')[4]
+        except:
+            client.llm_context = "no character loaded"
     if not hasattr(client, 'behavior'):
         client.behavior = Behavior()
     client.behavior.__dict__.update(config.behavior)
@@ -459,9 +460,9 @@ async def create_image_prompt(llm_prompt):
 
 def determine_date(current_time):
     """ receives time setting from character sheet and returns date as human readable format """
-    if current_time == 'now':
+    if current_time == 0:
         current_time = datetime.now()
-    elif isinstance(current_time, int):
+    if isinstance(current_time, int):
         current_time = datetime.now() + timedelta(days=current_time)
     elif isinstance(current_time, float):
         days = math.floor(current_time)
@@ -542,15 +543,15 @@ async def on_message(message):
     user_input["state"]["name1"] = message.author.display_name
     user_input["state"]["name2"] = client.user.display_name
     user_input["state"]["context"] = client.llm_context
-    if client.behavior.current_time:
-        current_time = determine_date(client.behavior.current_time)
+    if client.behavior.time_offset:
+        current_time = determine_date(client.behavior.time_offset)
         user_input["state"]["context"] = f"It is now {current_time}\n" + user_input["state"]["context"]
     num = check_num_in_queue(message)
     if num >=10:
         await message.channel.send(f'{message.author.mention} You have 10 items in queue, please allow your requests to finish before adding more to the queue.')
     else:
         queue(message, user_input)
-        
+        pprint.pp(user_input)
         async with message.channel.typing():
             await llm_gen(message, queues)
 
@@ -573,13 +574,10 @@ async def helpmenu(ctx):
 
 @client.hybrid_command(description="Regenerate the bot's last reply")
 async def regen(ctx):
-    #last_message = ctx.bot.user
-    #last_message = await discord.utils.get(ctx.channel.history(), author__id=ctx.bot.user.id)
     info_embed.title = f"Regenerating ... "
     info_embed.description = ""
     await ctx.reply(embed=info_embed)
     user_input = LLMUserInputs().settings
-    #user_input["state"]["custom_stopping_strings"].append(message.author.display_name,client.user.display_name)
     user_input["regenerate"] = True
     last_resp = chatbot_wrapper_wrapper(user_input)
     await ctx.send(last_resp)
@@ -831,6 +829,7 @@ class LLMUserInputs():
     def __init__(self):
         self.settings = {
         "text": "",
+        #"history": {'internal': [], 'visible': []},
         "history": shared.history,
         "state": {
             "max_new_tokens": 400,
@@ -839,8 +838,8 @@ class LLMUserInputs():
             "top_p": 0.1,
             "top_k": 40,
             "typical_p": 1,
-            'epsilon_cutoff': 0,
-            'eta_cutoff': 0,
+            "epsilon_cutoff": 0,
+            "eta_cutoff": 0,
             "repetition_penalty": 1.18,
             "encoder_repetition_penalty": 1,
             "no_repeat_ngram_size": 0,
