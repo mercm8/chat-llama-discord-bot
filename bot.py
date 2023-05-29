@@ -74,7 +74,7 @@ from modules import chat, utils
 shared.args.chat = True
 from modules.LoRA import add_lora_to_model
 from modules.models import load_model
-from threading import Lock
+from threading import Lock, Thread
 shared.generation_lock = Lock()
 
 # Update the command-line arguments based on the interface values
@@ -398,7 +398,7 @@ async def send_long_message(channel, message_text):
         await send_long_message(channel, message_text[closing_codeblock_index+3:])
 
 def chatbot_wrapper_wrapper(user_input): #my naming schemes are hilarious
-    pprint.pp(user_input)
+    #pprint.pp(user_input)
     for resp in chatbot_wrapper(**user_input):
         i_resp = resp['internal']
         if len(i_resp)>0:
@@ -441,16 +441,15 @@ async def on_ready():
             client.llm_context = load_character(client.user.display_name, '', '')[4]
         except:
             client.llm_context = "no character loaded"
-    #if not hasattr(client, 'behavior'):
+    client.fresh = True
     client.behavior = Behavior()
     client.behavior.__dict__.update(config.behavior)
     data = get_character_data(client.user.display_name)
     client.behavior.__dict__.update(data["behavior"])
-
     logging.info("bot ready")
     await client.tree.sync()
 
-def a1111_online():
+async def a1111_online(ctx):
     try:
         r = requests.get(f'{A1111}/')
         status = r.raise_for_status()
@@ -458,9 +457,12 @@ def a1111_online():
         return True
     except Exception as exc:
         logging.warning(exc)
+        info_embed.title = f"A1111 api is not running at {A1111}"
+        info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
+        await ctx.reply(embed=info_embed)        
         return False
     
-async def create_image_prompt(llm_prompt):
+def create_image_prompt(llm_prompt):
     user_input = LLMUserInputs().settings
     user_input["text"] = llm_prompt
     user_input["state"]["name1"] = ""
@@ -470,7 +472,9 @@ async def create_image_prompt(llm_prompt):
     return last_resp
 
 def determine_date(current_time):
-    """ receives time setting from character sheet and returns date as human readable format """
+    """ receives time setting from character sheet and returns date as human readable format 
+    actually, it doesnt seem to need to be that human readable, making it shorter to save context instead.
+    """
     if current_time == 0:
         current_time = datetime.now()
     elif isinstance(current_time, int):
@@ -481,67 +485,76 @@ def determine_date(current_time):
         current_time = datetime.now() + timedelta(days=days, hours=hours)
     else:
         return None
-    if current_time.hour < 12:
-        time_string = 'in the morning'
-    elif current_time.hour < 17:
-        time_string = 'in the afternoon'
-    else:
-        time_string = 'in the evening'
-    current_time = current_time.strftime('%B %d{}, %Y, %I {}').format('th' if 11<=current_time.day<=13 else {1:'st',2:'nd',3:'rd'}.get(current_time.day%10, 'th'), time_string)        
+    # if current_time.hour < 12:
+    #     time_string = 'in the morning'
+    # elif current_time.hour < 17:
+    #     time_string = 'in the afternoon'
+    # else:
+    #     time_string = 'in the evening'
+    #current_time = current_time.strftime('%B %d{}, %Y, %I {}').format('th' if 11<=current_time.day<=13 else {1:'st',2:'nd',3:'rd'}.get(current_time.day%10, 'th'), time_string)        
+    current_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
     return current_time
+
+def user_asks_for_image(message):
+    image_triggers = ['take a picture', 'take a photo', 'take another picture','generate an image','take a selfie','take another selfie','take a self portrait'] 
+    # Might want to move these triggers into the yaml file to let users localize/customize
+    if (any(word in message.clean_content.lower() for word in image_triggers) or \
+        (random.random() < client.behavior.reply_with_image)) \
+         and client.behavior.bot_should_reply(message):
+        return True
+    else:
+        return False
+
+def build_llm_4_image_prompt(text,data):
+    """ Triggering the LLM here so it's aware of the picture it's sending to the user,
+    or else it gets 'confused' when the user responds to the image. """
+    if 'selfie' in text:
+        llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
+        Include your appearance, your current state of clothing, your surroundings 
+        and what you are doing right now. """
+    else: 
+        llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}"."""
+    llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
+    The description in your response will be sent to an image generation API."""
+    if f"@{client.user.display_name}" in text:
+        text = text.replace(f"@{client.user.display_name}","")
+    if data.get("override_llm_prompt"):
+        llm_prompt = text
+    return llm_prompt
 
 @client.event
 async def on_message(message):
     text = message.clean_content
-    ctx = await client.get_context(message)
     data = get_character_data(client.user.display_name)
+    ctx = await client.get_context(message)
     if client.behavior.main_channels == None and client.user.mentioned_in(message):
         """ User has not set a main channel for the bot, but is speaking to it. 
         Likely first time use. Setting current channel as main channel for bot which will
         also instruct user on how to change main channel in the embed notification """
         main(ctx)
-    image_triggers = ['take a picture', 'take a photo', 'take another picture','generate an image','take a selfie','take another selfie','take a self portrait'] 
-    # Might want to move these triggers into the yaml file to let users localize/customize
-    if (any(word in text.lower() for word in image_triggers) or \
-        (random.random() < client.behavior.reply_with_image)) \
-         and client.behavior.bot_should_reply(message):
-        if not a1111_online():
-            info_embed.title = f"A1111 api is not running at {A1111}"
-            info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
-            await ctx.reply(embed=info_embed)
-        else:
+    if user_asks_for_image(message):
+        if await a1111_online(ctx):
             info_embed.title = "Prompting ..."
             info_embed.description = " "
-            picture_frame = await ctx.reply(embed=info_embed)            
-            """ Triggering the LLM here so it's aware of the picture it's sending to the user,
-            or else it gets 'confused' when the user responds to the image. """
-
-            if 'selfie' in text:
-                llm_prompt = f"""[SYSTEM] You have been tasked with taking a selfie: "{text}".
-                Include your appearance, your current state of clothing, your surroundings 
-                and what you are doing right now.
-                """
-            else: 
-                llm_prompt = f"""[SYSTEM] You have been tasked with generating an image: "{text}"."""
-
-            llm_prompt += """Describe the image in vivid detail as if you were describing it to a blind person. 
-            The description in your response will be sent to an image generation API."""
-            if f"@{client.user.display_name}" in text:
-                text = text.replace(f"@{client.user.display_name}","")
-
-            if not hasattr(data,"override_llm_prompt"):
-                override_llm_prompt = False
-            elif data["override_llm_prompt"] == True:
-                override_llm_prompt = True
-            if override_llm_prompt == True: 
-                llm_prompt = text
-
+            picture_frame = await ctx.reply(embed=info_embed)
+            llm_prompt = build_llm_4_image_prompt(text, data)
             async with message.channel.typing():
-                image_prompt = await create_image_prompt(llm_prompt)
-                force_selfies = data.get("force_selfies")
-                if 'selfie' in text and force_selfies:
+                if data.get("skip_llm_prompting"):
+                    image_prompt = text
+                else: 
+                    image_prompt = create_image_prompt(llm_prompt)
+                if 'selfie' in text.lower() and data.get("force_selfies"):
+                    # Jamming in the word selfie into the image prompt
                     image_prompt = 'Selfie: ' + image_prompt
-                await pic(ctx, picture_frame, prompt=image_prompt)
+                # pprint.pp(image_prompt)
+                await picture_frame.delete()
+                await pic(ctx, prompt=image_prompt)
+                if image_prompt.startswith('Selfie: '):
+                    # Yanking in the word selfie out of the image prompt so nobody sees that we cheated
+                    image_prompt = image_prompt.replace('Selfie: ','')
+                if not data.get("post_llm_prompt") == False:
+                    # Sending prompt is default behavior, can be overridden in character file
+                    await ctx.send(image_prompt)                
                 return
     
     if client.behavior.bot_should_reply(message):
@@ -609,24 +622,21 @@ async def cont(ctx):
 
 @client.hybrid_command(description="Take a picture!")
 @app_commands.describe(prompt="The initial prompt to contextualize LLaMA")
-async def pic(ctx, picture_frame, prompt=None):
-    if not a1111_online():
-        info_embed.title = f"A1111 api is not running at {A1111}"
-        info_embed.description = "Launch Automatic1111 with the `--api` commandline argument\nRead more [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API)"
-        await ctx.reply(embed=info_embed)
-    else:
-        info_embed.title = "Processing ..."
-        info_embed.description = " "
-        await picture_frame.edit(embed=info_embed)
+async def pic(ctx, prompt=None):
+    if await a1111_online(ctx):
+        info_embed.title = "Processing"
+        info_embed.description = " ... " #await check_a1111_progress()
+        if client.fresh:
+            info_embed.description = "First request tends to take a long time, please be patient"
+        picture_frame = await ctx.reply(embed=info_embed)  
         if not prompt:
             llm_prompt = """Describe the scene as if it were a picture to a blind person,
             also describe yourself and refer to yourself in the third person if the picture is of you.
             Include as much detail as you can."""
-            image_prompt = await create_image_prompt(llm_prompt)
+            image_prompt = create_image_prompt(llm_prompt)
         else:
             image_prompt = prompt
-        info_embed.title = "Generating image ..."
-        #info_embed.description = image_prompt
+        info_embed.title = "Sending prompt to A1111 ..."
         await picture_frame.edit(embed=info_embed)
         payload = { "prompt": image_prompt, "width": 768, "height": 512, "steps": 20, "restore_faces": True } 
         # Looking for payload settings in config file:
@@ -640,13 +650,12 @@ async def pic(ctx, picture_frame, prompt=None):
         positive_prompt_suffix = data.get("positive_prompt_suffix")
         negative_prompt = data.get("negative_prompt")
         presets = data.get("presets")
-        if 'selfie' in payload["prompt"]: 
+        if 'selfie' in payload["prompt"].lower(): 
             payload["width"] = 512
             payload["height"] = 768
-        if 'instagram' in payload["prompt"]: 
+        if 'instagram' in payload["prompt"].lower():
             payload["width"] = 512
             payload["height"] = 512
-
         if positive_prompt_prefix: 
             payload["prompt"] = f'{positive_prompt_prefix} {image_prompt}'
         if positive_prompt_suffix:
@@ -668,22 +677,23 @@ async def pic(ctx, picture_frame, prompt=None):
         payload["prompt"] = prompt
         
         #pprint.pp(payload)
-        task = asyncio.ensure_future(a1111_txt2img(payload))
+        task = asyncio.ensure_future(a1111_txt2img(payload,picture_frame))
         try:
             await asyncio.wait_for(task, timeout=120)
         except asyncio.TimeoutError:
             info_embed.title = "Timeout error"
             await ctx.send("Timeout error")
-            await picture_frame.edit(delete_after=15)
+            await picture_frame.edit(delete_after=5)
         else:
+            client.fresh = False
             file = discord.File(os.path.join(os.path.dirname(__file__), 'img.png'))
             info_embed.title = "Image complete"
-            if image_prompt.startswith('Selfie: '):
-                image_prompt = image_prompt.replace('Selfie: ','')
-            await picture_frame.edit(delete_after=1)
+
+            await picture_frame.delete()
             await ctx.send(file=file)
-            os.rename('img.png', f'{int(time.time())}.png' )
-            await ctx.send(image_prompt)
+            if not os.path.exists("sd_outputs"): os.makedirs("sd_outputs")
+            os.rename('img.png', f'sd_outputs/{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.png' )
+
 
 # @client.hybrid_command(aliases=["set"], description="Set LLM values")
 # @app_commands.describe(
@@ -1002,31 +1012,103 @@ def check_num_in_queue(message):
     user_list_in_que = [list(i.keys())[0] for i in queues]
     return user_list_in_que.count(user)
 
-async def a1111_txt2img(payload):
-    response = requests.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload)
-    #await check_progress()
-    r = response.json()
+async def a1111_txt2img(payload, picture_frame):
+    # Start task to check progress
+    progress_task = asyncio.create_task(check_a1111_progress_3(picture_frame))
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url=f'{A1111}/sdapi/v1/txt2img', json=payload) as response:
+            # Wait for progress task to finish
+            await progress_task
 
-    for i in r['images']:
-        image = Image.open(io.BytesIO(base64.b64decode(i.split(",",1)[0])))
-        png_payload = {
-            "image": "data:image/png;base64," + i
-        }
-        response2 = requests.post(url=f'{A1111}/sdapi/v1/png-info', json=png_payload)
-        pnginfo = PngImagePlugin.PngInfo()
-        pnginfo.add_text("parameters", response2.json().get("info"))
-        image.save('img.png', pnginfo=pnginfo)
-    return image
+            # How about some indentation you fuckwit
+            r = await response.json()
+            #pprint.pp(r['parameters'])
+            #pprint.pp(r['info'])
+            for i in r['images']:
+                image = Image.open(io.BytesIO(base64.b64decode(i.split(",",1)[0])))
+                png_payload = {
+                    "image": "data:image/png;base64," + i
+                }
+                response2 = requests.post(url=f'{A1111}/sdapi/v1/png-info', json=png_payload)
+                pnginfo = PngImagePlugin.PngInfo()
+                pnginfo.add_text("parameters", response2.json().get("info"))
+                image.save('img.png', pnginfo=pnginfo)
+            return image
 
-async def check_progress():
+def progress_bar(value, length=20):
+    filled_length = int(length * value)
+    bar = ':white_large_square:' * filled_length + ':white_square_button:' * (length - filled_length)
+    return f'{bar}'
+
+async def check_a1111_progress_3(picture_frame):
+    async with aiohttp.ClientSession() as session:
+        progress_data = {"progress":0}
+        while progress_data['progress'] == 0:
+            try:
+                async with session.get(f'{A1111}/sdapi/v1/progress') as progress_response:
+                    progress_data = await progress_response.json()
+                    progress = progress_data['progress']
+                    #print(f'Progress: {progress}%')
+                    info_embed.title = 'Waiting for response from A1111 ...'
+                    await picture_frame.edit(embed=info_embed)                    
+                    await asyncio.sleep(1)
+            except aiohttp.client_exceptions.ClientConnectionError:
+                print('Connection closed, retrying in 1 seconds')
+                await asyncio.sleep(1)
+        while progress_data["state"]["job_count"] > 0:
+            try:
+                async with session.get(f'{A1111}/sdapi/v1/progress') as progress_response:
+                    progress_data = await progress_response.json()
+                    #pprint.pp(progress_data)
+                    progress = progress_data['progress'] * 100
+                    if progress == 0 :
+                        info_embed.title = f'Generating image: 100%'
+                        info_embed.description = progress_bar(1)
+                        await picture_frame.edit(embed=info_embed)
+                        break
+                    #print(f'Progress: {progress}%')
+                    info_embed.title = f'Generating image: {progress:.0f}%'
+                    info_embed.description = progress_bar(progress_data['progress'])
+                    await picture_frame.edit(embed=info_embed)
+                    await asyncio.sleep(1)
+            except aiohttp.client_exceptions.ClientConnectionError:
+                print('Connection closed, retrying in 1 seconds')
+                await asyncio.sleep(1)
+
+def check_a1111_progress_2(picture_frame):
+    progress_response = requests.get(f'{A1111}/sdapi/v1/progress')
+    progress_data = progress_response.json()
+    while progress_data['progress'] == 0:
+        progress_response = requests.get(f'{A1111}/sdapi/v1/progress')
+        progress_data = progress_response.json()
+        print(f'Waiting')
+        if progress_data['progress'] > 0:
+            break
+        time.sleep(1)
+    while progress_data["state"]["job_count"] > 0:
+        # Send GET request to progress endpoint
+        progress_response = requests.get(f'{A1111}/sdapi/v1/progress')
+        progress_data = progress_response.json()
+        progress = progress_data['progress']
+        print(f'Progress: {progress}%')
+        #pprint.pp(progress_data)
+        # Exit loop if workload is complete
+        if progress > 0.9:
+            break
+        # Wait before checking progress again
+        time.sleep(1)
+
+async def check_a1111_progress():
     url = f'{A1111}/sdapi/v1/progress'
     loop = asyncio.get_running_loop()
     response = await loop.run_in_executor(None, requests.get, url)
     if response.status_code == 200:
         data = response.json()
         print(data)
+        return data
     else:
         print("Error:", response.status_code)
+        return None
 
 # if not hasattr(client, 'behavior'):
 #     client.behavior = Behavior()
