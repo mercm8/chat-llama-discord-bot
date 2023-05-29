@@ -21,25 +21,31 @@ behavior:
   reply_to_bots_when_adressed: 0.5 # Chance for bot to reply when other bots mention it by name
   go_wild_in_channel: true # Whether or not the bot will always reply in the main channel
   conversation_recency: 600 # Deprecated
-  time_offset: 1 # 0 will set the current date to today's date (or whatever the system time is). '-0.5' shifts the current date to be 12 hours ago. '100000' sets the date to be 100000 days in the future.
+  time_offset: 0 # 0 will set the current date to today's date (or whatever the system time is). '-0.5' shifts the current date to be 12 hours ago. '100000' sets the date to be 100000 days in the future.
 
-
-# SD prompt configuration
-# prefix, suffix and negative lines are added to the beginning and end of all prompts sent to SD in order to guarantee a style.
-override_llm_prompt: False # If True, sends your message directly to the bot without adding prompting instructions.
+## SD prompt configuration
+# payload settings:
 restore_faces: True
 sampler_name: "DPM++ 2M Karras"
 steps: 20
 cfg_scale: 5
-enable_hr: True
+enable_hr: False
+hr_upscaler: "4x-UltraSharp"
 denoising_strength: 0.55
 hr_scale: 2
 hr_second_pass_steps: 20 
+
+override_llm_prompt: False # If True, sends your message directly to the llm without adding prompting instructions such as "you've been tasked with taking a selfie".
+skip_llm_prompting: False # If True, sends your message directly to SD without adding prompting instructions, i.e. "take a picture of a dog" will be sent to SD as the prompt.
+post_llm_prompt: True # Posts the generated LLM prompt along with the image
+force_selfies: True # prefixes the word "Selfie: " to the prompt when user asks for selfie, forcing portrait format
+
+# prefix, suffix and negative lines are added to the beginning and end of all prompts sent to SD in order to guarantee a style.
 positive_prompt_prefix: 
-positive_prompt_suffix: 24mm, 4k textures, soft cinematic light, adobe lightroom, photolab, hdr, intricate, elegant, highly detailed, sharp focus, (cinematic look:1.2), soothing tones, insane details, intricate details, hyperdetailed, low contrast, soft cinematic light, dim colors, exposure blend, hdr, faded
+positive_prompt_suffix: 75mm, 4k textures, soft cinematic light, adobe lightroom, photolab, hdr, intricate, elegant, highly detailed, sharp focus, cinematic look, insane details, intricate details, hyperdetailed
 negative_prompt: ng_deepnegative_v1_75t
 presets:
-  # Add trigger words that result in extra SD prompt values being tagged on to the prompt
+  # Add trigger words that result in extra SD prompt values being tagged on to the final image prompt
   - trigger: 'Llayla'
     positive_prompt: ' <lora:llayla:1.0>'
     negative_prompt: ''
