@@ -79,7 +79,7 @@ shared.generation_lock = Lock()
 
 # Update the command-line arguments based on the interface values
 def update_model_parameters(state, initial=False):
-    elements = ui.list_model_elements()  # the names of the parameters
+    elements = list_model_elements()  # the names of the parameters
     gpu_memories = []
 
     for i, element in enumerate(elements):
@@ -122,11 +122,6 @@ def update_model_parameters(state, initial=False):
             shared.args.gpu_memory = [f"{i}MiB" for i in gpu_memories]
         else:
             shared.args.gpu_memory = None
-
-#Load Extensions    
-extensions_module.available_extensions = utils.get_available_extensions()
-if shared.args.extensions is not None and len(shared.args.extensions) > 0:
-    extensions_module.load_extensions()
 
 #Discord Bot
 
@@ -227,49 +222,6 @@ def list_model_elements():
         elements.append(f"gpu_memory_{i}")
     return elements
 
-# Update the command-line arguments based on the interface values
-def update_model_parameters(state, initial=False):
-    elements = list_model_elements()  # the names of the parameters
-    gpu_memories = []
-
-    for i, element in enumerate(elements):
-        if element not in state:
-            continue
-
-        value = state[element]
-        if element.startswith("gpu_memory"):
-            gpu_memories.append(value)
-            continue
-
-        if initial and vars(shared.args)[element] != vars(shared.args_defaults)[element]:
-            continue
-
-        # Setting null defaults
-        if element in ["wbits", "groupsize", "model_type"] and value == "None":
-            value = vars(shared.args_defaults)[element]
-        elif element in ["cpu_memory"] and value == 0:
-            value = vars(shared.args_defaults)[element]
-
-        # Making some simple conversions
-        if element in ["wbits", "groupsize", "pre_layer"]:
-            value = int(value)
-        elif element == "cpu_memory" and value is not None:
-            value = f"{value}MiB"
-
-        setattr(shared.args, element, value)
-
-    found_positive = False
-    for i in gpu_memories:
-        if i > 0:
-            found_positive = True
-            break
-
-    if not (initial and vars(shared.args)["gpu_memory"] != vars(shared.args_defaults)["gpu_memory"]):
-        if found_positive:
-            shared.args.gpu_memory = [f"{i}MiB" for i in gpu_memories]
-        else:
-            shared.args.gpu_memory = None
-
 # Loading custom settings
 settings_file = None
 if shared.args.settings is not None and Path(shared.args.settings).exists():
@@ -296,6 +248,10 @@ else:
             shared.args.extensions.append(extension)
 
 available_models = get_available_models()
+
+#Load Extensions    
+if shared.args.extensions is not None and len(shared.args.extensions) > 0:
+    extensions_module.load_extensions()
 
 # Model defined through --model
 if shared.args.model is not None:
