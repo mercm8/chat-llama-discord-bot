@@ -816,6 +816,8 @@ class LLMUserInputs():
             "temperature": 0.7,
             "top_p": 0.1,
             "top_k": 40,
+            "tfs": 0,
+            'top_a': 0,    
             "typical_p": 1,
             "epsilon_cutoff": 0,
             "eta_cutoff": 0,
