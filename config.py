@@ -11,7 +11,9 @@ sd = {
         'hr_upscaler': "4x-UltraSharp",
         'denoising_strength': 0.55,
         'hr_scale': 2,
-        'hr_second_pass_steps': 20
+        'hr_second_pass_steps': 20,
+        'seed_resize_from_h': 0,
+        'seed_resize_from_w': 0
         }
     }
 
