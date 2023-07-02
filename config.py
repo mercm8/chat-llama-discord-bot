@@ -26,6 +26,7 @@ llm = {
             'top_k': 40,
             'typical_p': 1,
             'repetition_penalty': 1.18,
+            'repetition_penalty_range': 0,
             'encoder_repetition_penalty': 1,
             'no_repeat_ngram_size': 0,
             'min_length': 50,
